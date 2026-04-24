@@ -1,0 +1,51 @@
+env: dev
+
+storage:
+  lancedb_uri: ${PEERDEX_LANCEDB_URI:-./lancedb}
+  cache_uri: ${PEERDEX_CACHE_URI:-./cache}
+  table_name: peer_nodes
+
+docling:
+  artifacts_path: ${DOCLING_ARTIFACTS_PATH:-./cache/docling-models}
+  do_ocr: false
+  do_table_structure: true
+  generate_page_images: false   # we never consume full-page renders
+  generate_picture_images: true
+  picture_image_scale: 1.0      # gpt-4o-mini doesn't need 2x crops
+
+chunker:
+  tokenizer: cl100k_base
+  max_tokens: 512
+
+embed:
+  model: ${OPENAI_EMBED_MODEL:-text-embedding-3-small}
+  dim: 1536
+  batch_size: 128
+
+llm:
+  model: ${OPENAI_LLM_MODEL:-gpt-4o-mini}
+  synth_model: ${OPENAI_SYNTH_MODEL:-gpt-5.4-mini}
+  retriever_model: ${OPENAI_RETRIEVER_MODEL:-gpt-5.4-nano}
+
+vlm:
+  model: ${OPENAI_VLM_MODEL:-gpt-4o-mini}
+  cache_dir: ${PEERDEX_VLM_CACHE:-./cache/vlm-images}
+  image_max_dim: 1600
+  min_bbox_area_pct: 1.5
+  skip_header_footer_band_pct: 8.0
+  concurrency: ${PEERDEX_VLM_CONCURRENCY:-8}
+
+resilience:
+  openai_rpm: ${PEERDEX_OPENAI_RPM:-500}
+  openai_tpm: ${PEERDEX_OPENAI_TPM:-200000}
+  retry_attempts: 5
+  timeout_seconds: 60
+
+retrieval:
+  top_k_dense: 20
+  top_k_bm25: 20
+  rerank_top_k: 8
+  final_top_k: 5
+
+logging:
+  level: ${PEERDEX_LOG_LEVEL:-INFO}
