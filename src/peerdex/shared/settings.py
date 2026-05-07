@@ -59,8 +59,12 @@ class EmbedCfg(BaseModel):
 class LLMCfg(BaseModel):
     """Text-only LLMs. Vision lives under ``vlm`` below."""
     model: str
+    router_model: str | None = None
+    fusion_model: str | None = None
+    hyde_model: str | None = None
+    reranker_model: str | None = None
     synth_model: str | None = None
-    retriever_model: str | None = None
+    judge_model: str | None = None
 
 
 class VLMCfg(BaseModel):

@@ -17,8 +17,11 @@ from deepeval.test_case import LLMTestCase
 
 from experiments.conftest import EvalCase, load_qa_cases, run_retrieve_only
 
-_CTX_PRECISION = ContextualPrecisionMetric(threshold=0.5, model="gpt-4o-mini")
-_CTX_RELEVANCY = ContextualRelevancyMetric(threshold=0.5, model="gpt-4o-mini")
+from peerdex.shared.settings import get_settings
+
+_JUDGE = get_settings().llm.judge_model or get_settings().llm.model
+_CTX_PRECISION = ContextualPrecisionMetric(threshold=0.5, model=_JUDGE)
+_CTX_RELEVANCY = ContextualRelevancyMetric(threshold=0.5, model=_JUDGE)
 
 
 def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:

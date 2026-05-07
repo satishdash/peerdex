@@ -104,7 +104,7 @@ def _classify_prompt(query: str) -> list[dict[str, str]]:
 async def _llm_classify(query: str) -> RouteHit | None:
     """Use a cheap LLM call to classify the query into a known route."""
     s = get_settings()
-    model = s.llm.retriever_model or s.llm.model
+    model = s.llm.router_model or s.llm.model
     messages = _classify_prompt(query)
 
     try:

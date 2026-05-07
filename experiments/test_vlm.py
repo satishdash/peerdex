@@ -20,7 +20,10 @@ from deepeval.test_case import LLMTestCase
 from experiments.conftest import load_vlm_golden
 
 _GOLDEN = load_vlm_golden()
-_FAITHFULNESS = FaithfulnessMetric(threshold=0.7, model="gpt-4o-mini")
+from peerdex.shared.settings import get_settings
+
+_JUDGE = get_settings().llm.judge_model or get_settings().llm.model
+_FAITHFULNESS = FaithfulnessMetric(threshold=0.7, model=_JUDGE)
 
 
 @pytest.mark.parametrize(

@@ -138,13 +138,18 @@ class HybridRetriever:
         )
 
         s = get_settings()
-        # seed + temperature=0 makes fusion paraphrases and LLM-rerank
-        # tie-breaks reproducible across runs (OpenAI honors `seed` as
-        # best-effort determinism).
-        self._llm = CachedLIOpenAI(
-            model=s.llm.retriever_model or s.llm.model,
-            temperature=0.0,
-            additional_kwargs={"seed": 7},
+        # Each retrieval step gets its own model knob so they can be
+        # tuned independently (cheap nano for paraphrasing, smarter
+        # model for reranking, etc.).
+        _kw = {"temperature": 0.0, "additional_kwargs": {"seed": 7}}
+        self._fusion_llm = CachedLIOpenAI(
+            model=s.llm.fusion_model or s.llm.model, **_kw,
+        )
+        self._hyde_llm = CachedLIOpenAI(
+            model=s.llm.hyde_model or s.llm.model, **_kw,
+        )
+        self._reranker_llm = CachedLIOpenAI(
+            model=s.llm.reranker_model or s.llm.model, **_kw,
         )
 
     # ----- retriever assembly -----
@@ -202,7 +207,7 @@ class HybridRetriever:
         )
         return QueryFusionRetriever(
             retrievers=[self._dense(), self._bm25()],
-            llm=self._llm,
+            llm=self._fusion_llm,
             similarity_top_k=max(self._cfg.top_k_dense, self._cfg.top_k_bm25),
             num_queries=4,
             mode="reciprocal_rerank",
@@ -217,7 +222,7 @@ class HybridRetriever:
             rerank_criteria=self.prompts.rerank_criteria,
         )
         return LLMRerank(
-            llm=self._llm,
+            llm=self._reranker_llm,
             choice_select_prompt=rerank_prompt,
             choice_batch_size=5,
             top_n=self._cfg.rerank_top_k,
@@ -243,6 +248,24 @@ class HybridRetriever:
             return await self._retrieve_router_hit(query, bundle, hit)
         return await self._retrieve_open(query, bundle)
 
+    # ----- score normalisation -----
+
+    @staticmethod
+    def _normalize(nodes: list[NodeWithScore]) -> list[NodeWithScore]:
+        """Min-max normalise scores to [0, 1] in-place.
+
+        Without this, BM25 raw scores (range 0–30+) dwarf dense cosine
+        similarities (0–1) and the route boost cannot compensate.
+        """
+        if not nodes:
+            return nodes
+        scores = [n.score or 0.0 for n in nodes]
+        lo, hi = min(scores), max(scores)
+        span = hi - lo if hi > lo else 1.0
+        for n in nodes:
+            n.score = ((n.score or 0.0) - lo) / span
+        return nodes
+
     # ----- router-hit fast path (no fusion-paraphrase LLM, no HyDE, no reranker) -----
 
     async def _retrieve_router_hit(self, query: str, bundle: QueryBundle, hit) -> RetrievalResult:
@@ -250,15 +273,19 @@ class HybridRetriever:
         dense = self._dense()
         bm25 = self._bm25()
 
-        primary = dense.retrieve(bundle) + bm25.retrieve(bundle)
+        d_primary = self._normalize(dense.retrieve(bundle))
+        b_primary = self._normalize(bm25.retrieve(bundle))
         aug_bundle = QueryBundle(query_str=hit.augmented_query)
-        extra = dense.retrieve(aug_bundle) + bm25.retrieve(aug_bundle)
+        d_extra = self._normalize(dense.retrieve(aug_bundle))
+        b_extra = self._normalize(bm25.retrieve(aug_bundle))
+        primary = d_primary + b_primary
+        extra = d_extra + b_extra
         candidates = merge_unique(primary, extra)
 
         candidates, _signals = route_boost(candidates, hit.route)
         candidates.sort(key=lambda n: n.score or 0.0, reverse=True)
         kept = candidates[: self._cfg.final_top_k]
-        kept = [n for n in kept if (n.score or 0.0) >= self.min_rerank_score]
+        kept = [n for n in kept if (n.score or 0.0) >= 0.1]
         log.info(f"[retrieve] router-hit kept={len(kept)}")
         return RetrievalResult(
             nodes=kept,
@@ -280,7 +307,7 @@ class HybridRetriever:
         messages = [
             ChatMessage(role="user", content=prompt.format(context_str=bundle.query_str)),
         ]
-        response = await self._llm.achat(messages)
+        response = await self._hyde_llm.achat(messages)
         hypothesis = response.message.content or ""
         # Return a new bundle that includes both the original query and the
         # hypothesis as additional embedding strings.

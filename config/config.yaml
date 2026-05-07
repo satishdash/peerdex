@@ -11,7 +11,7 @@ docling:
   do_table_structure: true
   generate_page_images: false   # we never consume full-page renders
   generate_picture_images: true
-  picture_image_scale: 1.0      # gpt-4o-mini doesn't need 2x crops
+  picture_image_scale: 1.0
 
 chunker:
   tokenizer: cl100k_base
@@ -23,12 +23,16 @@ embed:
   batch_size: 128
 
 llm:
-  model: ${OPENAI_LLM_MODEL:-gpt-4o-mini}
+  model: ${OPENAI_LLM_MODEL:-gpt-5.4-mini}
+  router_model: ${OPENAI_ROUTER_MODEL:-gpt-5.4-nano}
+  fusion_model: ${OPENAI_FUSION_MODEL:-gpt-5.4-nano}
+  hyde_model: ${OPENAI_HYDE_MODEL:-gpt-5.4-nano}
+  reranker_model: ${OPENAI_RERANKER_MODEL:-gpt-5.4-mini}
   synth_model: ${OPENAI_SYNTH_MODEL:-gpt-5.4-mini}
-  retriever_model: ${OPENAI_RETRIEVER_MODEL:-gpt-5.4-nano}
+  judge_model: ${OPENAI_JUDGE_MODEL:-gpt-5.4-mini}
 
 vlm:
-  model: ${OPENAI_VLM_MODEL:-gpt-4o-mini}
+  model: ${OPENAI_VLM_MODEL:-gpt-5.4-mini}
   cache_dir: ${PEERDEX_VLM_CACHE:-./cache/vlm-images}
   image_max_dim: 1600
   min_bbox_area_pct: 1.5

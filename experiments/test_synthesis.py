@@ -16,8 +16,11 @@ from deepeval.test_case import LLMTestCase
 
 from experiments.conftest import EvalCase, load_qa_cases, run_pipeline
 
-_FAITHFULNESS = FaithfulnessMetric(threshold=0.7, model="gpt-4o-mini")
-_ANSWER_RELEVANCY = AnswerRelevancyMetric(threshold=0.7, model="gpt-4o-mini")
+from peerdex.shared.settings import get_settings
+
+_JUDGE = get_settings().llm.judge_model or get_settings().llm.model
+_FAITHFULNESS = FaithfulnessMetric(threshold=0.7, model=_JUDGE)
+_ANSWER_RELEVANCY = AnswerRelevancyMetric(threshold=0.7, model=_JUDGE)
 
 
 def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:

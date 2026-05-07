@@ -160,15 +160,22 @@ _ANNUAL = ReportPrompts(
         ),
         TopicRoute(
             name="revenue",
-            triggers=("revenue", "gross revenue", "total revenue", "sales"),
+            triggers=("revenue", "gross revenue", "total revenue", "sales",
+                      "operating revenue"),
             keywords=(
                 "Total Gross Revenue", "Revenue from Contracts with Customers",
                 "Disaggregation of Revenue",
+                "Operating revenues", "Total operating revenues",
+                "Total revenues", "Net revenues",
             ),
             heading_patterns=(
                 "Consolidated Statements of Income",
+                "Consolidated Statement of Operations",
+                "Consolidated Statements of Operations",
                 "Notes to the Consolidated Financial Statements",
                 "Disaggregation of Revenue",
+                "Annual information", "Selected financial",
+                "Results of operations", "Financial highlights",
             ),
             prefer_table=True,
         ),
