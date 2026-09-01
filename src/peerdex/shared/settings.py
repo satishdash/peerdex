@@ -20,8 +20,10 @@ _ENV_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)(?::-([^}]*))?\}")
 
 def _expand(value: Any) -> Any:
     if isinstance(value, str):
+
         def repl(m: re.Match[str]) -> str:
             return os.environ.get(m.group(1), m.group(2) or "")
+
         return _ENV_PATTERN.sub(repl, value)
     if isinstance(value, dict):
         return {k: _expand(v) for k, v in value.items()}
@@ -48,6 +50,8 @@ class DoclingCfg(BaseModel):
 class ChunkerCfg(BaseModel):
     tokenizer: str = "cl100k_base"
     max_tokens: int = 512
+    parent_chunk_tokens: int = 1024
+    child_chunk_tokens: int = 256
 
 
 class EmbedCfg(BaseModel):
@@ -58,8 +62,8 @@ class EmbedCfg(BaseModel):
 
 class LLMCfg(BaseModel):
     """Text-only LLMs. Vision lives under ``vlm`` below."""
+
     model: str
-    router_model: str | None = None
     fusion_model: str | None = None
     hyde_model: str | None = None
     reranker_model: str | None = None
@@ -69,6 +73,7 @@ class LLMCfg(BaseModel):
 
 class VLMCfg(BaseModel):
     """OpenAI Vision used during ingestion."""
+
     model: str
     cache_dir: str
     image_max_dim: int = 1600

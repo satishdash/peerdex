@@ -23,15 +23,15 @@ from llama_index.core.schema import NodeWithScore
 
 from peerdex.shared.llm import cached_completion
 from peerdex.shared.logging import get_logger
-from peerdex.shared.prompts import prompts_for
+from peerdex.shared.prompts import PROMPTS
 from peerdex.shared.resilience import light_decorator
-from peerdex.shared.schema import ReportType
 from peerdex.shared.settings import get_settings
 
 log = get_logger("synthesize")
 
 
 # ---------- result types ----------
+
 
 @dataclass
 class Citation:
@@ -100,9 +100,8 @@ def _format_passages(nodes: list[NodeWithScore]) -> tuple[str, list[NodeWithScor
         head = m.get("heading_path") or "root"
         kind = "table" if m.get("is_table") else ("figure" if m.get("is_figure") else "prose")
         lines.append(
-            f"[#{i}] {m.get('company','?')} {m.get('year','?')} "
-            f"({m.get('report_type','?')}) p.{m.get('page_no','?')} "
-            f"[{kind}] {head}\n"
+            f"[#{i}] {m.get('company', '?')} {m.get('year', '?')} "
+            f"p.{m.get('page_no', '?')} [{kind}] {head}\n"
             f"---\n{n.node.get_content().strip()}\n"
         )
     return "\n".join(lines), nodes
@@ -110,15 +109,9 @@ def _format_passages(nodes: list[NodeWithScore]) -> tuple[str, list[NodeWithScor
 
 # ---------- main entry point ----------
 
-@light_decorator()
-async def synthesize(
-    query: str,
-    nodes: list[NodeWithScore],
-    *,
-    report_type: ReportType | str | None = None,
-) -> CitedAnswer:
-    prompts = prompts_for(report_type)
 
+@light_decorator()
+async def synthesize(query: str, nodes: list[NodeWithScore]) -> CitedAnswer:
     if not nodes:
         return CitedAnswer(
             answer="",
@@ -128,14 +121,11 @@ async def synthesize(
         )
 
     sys_msg = _SYS_TMPL.format(
-        label=prompts.label,
-        synthesis_rules=prompts.synthesis_rules,
+        label=PROMPTS.label,
+        synthesis_rules=PROMPTS.synthesis_rules,
     )
     passages_block, ordered = _format_passages(nodes)
-    user_msg = (
-        f"Question: {query}\n\n"
-        f"Passages (use ONLY these):\n\n{passages_block}"
-    )
+    user_msg = f"Question: {query}\n\nPassages (use ONLY these):\n\n{passages_block}"
 
     s = get_settings()
     rsp = await cached_completion(
@@ -153,13 +143,18 @@ async def synthesize(
     except json.JSONDecodeError:
         log.warning(f"[synth] non-JSON response, refusing: {raw[:200]!r}")
         return CitedAnswer(
-            answer="", citations=[], refused=True, reason="model_returned_invalid_json",
+            answer="",
+            citations=[],
+            refused=True,
+            reason="model_returned_invalid_json",
         )
 
     if data.get("refused"):
         return CitedAnswer(
-            answer="", citations=[],
-            refused=True, reason=str(data.get("reason") or "model_refused"),
+            answer="",
+            citations=[],
+            refused=True,
+            reason=str(data.get("reason") or "model_refused"),
         )
 
     answer = str(data.get("answer") or "").strip()
@@ -167,25 +162,28 @@ async def synthesize(
     for c in data.get("citations") or []:
         try:
             n = int(c["n"])
-        except (KeyError, ValueError, TypeError):
+        except KeyError, ValueError, TypeError:
             continue
         if not (1 <= n <= len(ordered)):
             continue
         node = ordered[n - 1].node
         m = node.metadata or {}
-        citations.append(Citation(
-            n=n,
-            node_id=node.node_id,
-            company=str(m.get("company", "")),
-            year=int(m.get("year", 0) or 0),
-            page=int(m.get("page_no", 0) or 0),
-            heading=str(m.get("heading_path", "")),
-            quote=str(c.get("quote") or "").strip(),
-        ))
+        citations.append(
+            Citation(
+                n=n,
+                node_id=node.node_id,
+                company=str(m.get("company", "")),
+                year=int(m.get("year", 0) or 0),
+                page=int(m.get("page_no", 0) or 0),
+                heading=str(m.get("heading_path", "")),
+                quote=str(c.get("quote") or "").strip(),
+            )
+        )
 
     if not answer or not citations:
         return CitedAnswer(
-            answer=answer, citations=citations,
+            answer=answer,
+            citations=citations,
             refused=True,
             reason="no_grounded_citations" if not citations else "empty_answer",
         )

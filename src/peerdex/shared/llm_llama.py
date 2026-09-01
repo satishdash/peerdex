@@ -9,7 +9,8 @@ it from a sync code path, the parent ``LIOpenAI.chat`` will make a normal
 inside a potentially-running event loop.
 """
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from llama_index.core.base.llms.types import ChatMessage, ChatResponse
 from llama_index.llms.openai import OpenAI as LIOpenAI
@@ -20,9 +21,7 @@ from peerdex.shared.llm import cached_completion
 class CachedLIOpenAI(LIOpenAI):
     """Drop-in ``LIOpenAI`` replacement with transparent disk caching on the async path."""
 
-    async def achat(
-        self, messages: Sequence[ChatMessage], **kwargs: Any
-    ) -> ChatResponse:
+    async def achat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResponse:
         oai_msgs = [
             {
                 "role": _role_str(m.role),
