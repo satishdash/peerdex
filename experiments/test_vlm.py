@@ -10,24 +10,23 @@ output, then implement the cache lookup in ``_find_cached_vlm_output``.
 Run:
     pytest experiments/test_vlm.py -v
 """
+
 from __future__ import annotations
 
 import pytest
-from deepeval import assert_test
+from conftest import load_vlm_golden
 from deepeval.metrics import FaithfulnessMetric
-from deepeval.test_case import LLMTestCase
 
-from experiments.conftest import load_vlm_golden
-
-_GOLDEN = load_vlm_golden()
 from peerdex.shared.settings import get_settings
 
+_GOLDEN = load_vlm_golden()
 _JUDGE = get_settings().llm.judge_model or get_settings().llm.model
 _FAITHFULNESS = FaithfulnessMetric(threshold=0.7, model=_JUDGE)
 
 
 @pytest.mark.parametrize(
-    "entry", _GOLDEN or [pytest.param(None, marks=pytest.mark.skip("no vlm_golden entries"))],
+    "entry",
+    _GOLDEN or [pytest.param(None, marks=pytest.mark.skip("no vlm_golden entries"))],
     ids=[f"{e.get('doc_id', '?')}::p{e.get('page', '?')}" for e in _GOLDEN] or ["empty"],
 )
 def test_vlm_extraction_faithfulness(entry: dict | None) -> None:

@@ -1,146 +1,198 @@
-"""Benchmark any combination of extractors on any PDF.
+"""Benchmark extractors across one or many PDFs.
 
 Usage:
-    # All registered extractors on a PDF:
-    uv run python experiments/test_extractor_benchmark.py ~/Documents/suncor_2025.pdf
+    uv run python experiments/test_extractor_benchmark.py ~/Documents/globex
+    uv run python experiments/test_extractor_benchmark.py a.pdf b.pdf --extractors liteparse
+    uv run python experiments/test_extractor_benchmark.py ~/Documents/globex --out bench.json
 
-    # Specific extractors only:
-    uv run python experiments/test_extractor_benchmark.py ~/Documents/suncor_2025.pdf --extractors docling liteparse
-
-    # Skip docling warm-cache advantage (force fresh):
-    uv run python experiments/test_extractor_benchmark.py ~/Documents/suncor_2025.pdf --cold
-
-Forces fresh docling extraction when --cold is passed (clears LRU converter cache).
-Prints a comparison table with block counts, table counts, and wall-clock time.
+Results are appended to the JSON file after every document so a long run
+survives an interrupt. Failures are recorded, never fatal.
 """
-from __future__ import annotations
 
 import argparse
+import asyncio
+import json
 import time
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from rich.console import Console
 from rich.table import Table
 
+from peerdex.parse import ExtractedDoc
 
 console = Console()
 
+_BLOCK_KINDS: tuple[str, ...] = ("heading", "paragraph", "table", "list", "picture")
 
-def _run_extractor(name: str, pdf_path: Path) -> dict:
-    """Run a single extractor, return stats + wall time."""
-    from peerdex.parse import get_extractor
 
-    ext = get_extractor(name)
-    t0 = time.perf_counter()
-    doc = ext.extract(pdf_path)
-    elapsed = time.perf_counter() - t0
+@dataclass
+class DocumentRun:
+    """One extractor's outcome on one document."""
 
-    return {
-        "name": name,
-        "version": ext.version,
-        "elapsed_s": elapsed,
-        "pages": len(doc.pages),
-        "blocks": len(doc.blocks),
-        "headings": sum(1 for b in doc.blocks if b.kind == "heading"),
-        "paragraphs": sum(1 for b in doc.blocks if b.kind == "paragraph"),
-        "tables": sum(1 for b in doc.blocks if b.kind == "table"),
-        "lists": sum(1 for b in doc.blocks if b.kind == "list"),
-        "pictures": sum(1 for b in doc.blocks if b.kind == "picture"),
+    extractor: str
+    version: str
+    document: str
+    size_mb: float
+    elapsed_s: float = 0.0
+    pages: int = 0
+    blocks: int = 0
+    counts: dict[str, int] = field(default_factory=dict)
+    table_cells: int = 0
+    text_chars: int = 0
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return not self.error
+
+
+class BenchmarkRunner:
+    """Runs each extractor over each document and accumulates the runs."""
+
+    def __init__(self, extractors: list[str], out_path: Path) -> None:
+        self._extractors: list[str] = extractors
+        self._out_path: Path = out_path
+        self._runs: list[DocumentRun] = []
+
+    def run(self, documents: list[Path]) -> list[DocumentRun]:
+        """Benchmark every extractor on every document, persisting as it goes."""
+        for document in documents:
+            for name in self._extractors:
+                self._runs.append(self._one(name, document))
+                self._persist()
+        return self._runs
+
+    def _one(self, name: str, document: Path) -> DocumentRun:
+        from peerdex.parse import get_extractor
+
+        size_mb: float = document.stat().st_size / 1_048_576
+        console.print(f"[cyan]{name}[/cyan] -> {document.name} ({size_mb:.1f} MB)")
+        try:
+            extractor = get_extractor(name)
+        except Exception as exc:
+            return DocumentRun(name, "?", document.name, size_mb, error=repr(exc))
+
+        started: float = time.perf_counter()
+        try:
+            doc: ExtractedDoc = _extract(extractor, document)
+        except Exception as exc:
+            elapsed: float = time.perf_counter() - started
+            console.print(f"  [red]FAILED after {_fmt_time(elapsed)}: {exc}[/red]")
+            return DocumentRun(
+                name, extractor.version, document.name, size_mb, elapsed, error=repr(exc)
+            )
+
+        run: DocumentRun = _summarise(name, extractor.version, document.name, size_mb, doc)
+        run.elapsed_s = time.perf_counter() - started
+        console.print(
+            f"  {_fmt_time(run.elapsed_s)}  pages={run.pages} blocks={run.blocks} "
+            f"tables={run.counts['table']} pictures={run.counts['picture']}"
+        )
+        return run
+
+    def _persist(self) -> None:
+        self._out_path.write_text(json.dumps([asdict(r) for r in self._runs], indent=2))
+
+
+def _extract(extractor: object, document: Path) -> ExtractedDoc:
+    """Call whichever half of the Extractor protocol this extractor implements."""
+    sync = getattr(extractor, "extract", None)
+    if sync is not None:
+        return sync(document)
+    return asyncio.run(extractor.extract_async(document))
+
+
+def _summarise(
+    name: str, version: str, document: str, size_mb: float, doc: ExtractedDoc
+) -> DocumentRun:
+    counts: dict[str, int] = dict.fromkeys(_BLOCK_KINDS, 0)
+    table_cells: int = 0
+    text_chars: int = 0
+    for block in doc.blocks:
+        counts[block.kind] = counts.get(block.kind, 0) + 1
+        text_chars += len(getattr(block, "text", "") or "")
+        table_cells += sum(len(row) for row in getattr(block, "rows", []) or [])
+    return DocumentRun(
+        extractor=name,
+        version=version,
+        document=document,
+        size_mb=size_mb,
+        pages=len(doc.pages),
+        blocks=len(doc.blocks),
+        counts=counts,
+        table_cells=table_cells,
+        text_chars=text_chars,
+    )
+
+
+def _fmt_time(seconds: float) -> str:
+    if seconds >= 60:
+        return f"{int(seconds // 60)}m {int(seconds % 60):02d}s"
+    return f"{seconds:.1f}s"
+
+
+def _documents(paths: list[Path]) -> list[Path]:
+    found: list[Path] = []
+    for path in paths:
+        resolved: Path = path.expanduser().resolve()
+        found.extend(sorted(resolved.glob("*.pdf")) if resolved.is_dir() else [resolved])
+    missing: list[Path] = [p for p in found if not p.exists()]
+    if missing:
+        raise SystemExit(f"not found: {', '.join(str(p) for p in missing)}")
+    return found
+
+
+_ROWS: tuple[tuple[str, Callable[[list[DocumentRun]], str]], ...] = (
+    ("Documents parsed", lambda rs: str(sum(1 for r in rs if r.ok))),
+    ("Failures", lambda rs: str(sum(1 for r in rs if not r.ok))),
+    ("Wall time", lambda rs: _fmt_time(sum(r.elapsed_s for r in rs))),
+    ("Pages", lambda rs: str(sum(r.pages for r in rs))),
+    ("Blocks", lambda rs: str(sum(r.blocks for r in rs))),
+    ("Headings", lambda rs: str(sum(r.counts.get("heading", 0) for r in rs))),
+    ("Paragraphs", lambda rs: str(sum(r.counts.get("paragraph", 0) for r in rs))),
+    ("Tables", lambda rs: str(sum(r.counts.get("table", 0) for r in rs))),
+    ("Table cells", lambda rs: str(sum(r.table_cells for r in rs))),
+    ("Lists", lambda rs: str(sum(r.counts.get("list", 0) for r in rs))),
+    ("Pictures", lambda rs: str(sum(r.counts.get("picture", 0) for r in rs))),
+    ("Text chars", lambda rs: str(sum(r.text_chars for r in rs))),
+)
+
+
+def _render(runs: list[DocumentRun], extractors: list[str]) -> None:
+    table = Table(title="Extraction benchmark (totals across all documents)")
+    table.add_column("Metric", style="bold")
+    for name in extractors:
+        table.add_column(name, justify="right")
+
+    by_extractor: dict[str, list[DocumentRun]] = {
+        name: [r for r in runs if r.extractor == name] for name in extractors
     }
+    for label, measure in _ROWS:
+        table.add_row(label, *[measure(by_extractor[name]) for name in extractors])
+    console.print(table)
 
-
-def _clear_docling_cache() -> None:
-    """Force docling converter re-init (no warm LRU cache)."""
-    from peerdex.parse._docling import _converter
-    _converter.cache_clear()
-
-
-def _fmt_time(s: float) -> str:
-    if s >= 60:
-        return f"{int(s // 60)}m {int(s % 60):02d}s"
-    return f"{s:.1f}s"
+    for run in (r for r in runs if not r.ok):
+        console.print(f"[red]{run.extractor} / {run.document}: {run.error[:160]}[/red]")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Benchmark PDF extractors")
-    parser.add_argument("pdf", type=Path, help="Path to a PDF file")
-    parser.add_argument(
-        "--extractors", nargs="+", default=None,
-        help="Extractor names to benchmark (default: all registered)",
-    )
-    parser.add_argument(
-        "--cold", action="store_true",
-        help="Clear docling LRU cache before running (force fresh)",
-    )
+    parser.add_argument("paths", nargs="+", type=Path, help="PDF files or directories")
+    parser.add_argument("--extractors", nargs="+", default=None, help="default: all registered")
+    parser.add_argument("--out", type=Path, default=Path("bench_extractors.json"))
     args = parser.parse_args()
 
-    pdf: Path = args.pdf.expanduser().resolve()
-    if not pdf.exists():
-        console.print(f"[red]PDF not found: {pdf}[/red]")
-        raise SystemExit(1)
-
     from peerdex.parse import available_extractors
-    names: list[str] = args.extractors or available_extractors()
 
-    console.rule(f"[bold]Extractor Benchmark ({len(names)} extractors)")
-    console.print(f"PDF: {pdf}  ({pdf.stat().st_size / 1_048_576:.1f} MB)\n")
+    extractors: list[str] = args.extractors or available_extractors()
+    documents: list[Path] = _documents(args.paths)
 
-    results: list[dict] = []
-    for name in names:
-        if args.cold and name == "docling":
-            _clear_docling_cache()
-        console.print(f"[cyan]Running {name}...[/cyan]")
-        try:
-            r = _run_extractor(name, pdf)
-            console.print(f"  done in {_fmt_time(r['elapsed_s'])}\n")
-            results.append(r)
-        except Exception as e:
-            console.print(f"  [red]FAILED: {e}[/red]\n")
-            results.append({"name": name, "error": str(e)})
-
-    # ── Results table ──
-    ok = [r for r in results if "error" not in r]
-    if not ok:
-        console.print("[red]All extractors failed.[/red]")
-        raise SystemExit(1)
-
-    t = Table(title=f"Extraction Benchmark — {pdf.name}")
-    t.add_column("Metric", style="bold")
-    for r in ok:
-        t.add_column(f"{r['name']} v{r['version']}", justify="right")
-
-    metrics = [
-        ("Wall time", "elapsed_s", "t"),
-        ("Pages", "pages", "d"),
-        ("Total blocks", "blocks", "d"),
-        ("Headings", "headings", "d"),
-        ("Paragraphs", "paragraphs", "d"),
-        ("Tables", "tables", "d"),
-        ("Lists", "lists", "d"),
-        ("Pictures", "pictures", "d"),
-    ]
-
-    for label, key, fmt in metrics:
-        row = [label]
-        for r in ok:
-            v = r[key]
-            row.append(_fmt_time(v) if fmt == "t" else str(v))
-        t.add_row(*row)
-
-    console.print(t)
-
-    # ── Speed comparison vs slowest ──
-    if len(ok) > 1:
-        slowest = max(ok, key=lambda r: r["elapsed_s"])
-        for r in ok:
-            if r is slowest:
-                continue
-            speedup = slowest["elapsed_s"] / r["elapsed_s"] if r["elapsed_s"] > 0 else 0
-            console.print(
-                f"  {r['name']}: [bold green]{speedup:.1f}x faster[/bold green] "
-                f"than {slowest['name']} "
-                f"({_fmt_time(r['elapsed_s'])} vs {_fmt_time(slowest['elapsed_s'])})"
-            )
+    console.rule(f"[bold]{len(extractors)} extractors x {len(documents)} documents")
+    runs: list[DocumentRun] = BenchmarkRunner(extractors, args.out).run(documents)
+    _render(runs, extractors)
+    console.print(f"\nwrote {args.out}")
 
 
 if __name__ == "__main__":
