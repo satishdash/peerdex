@@ -14,17 +14,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-
 BlockKind = Literal["heading", "paragraph", "table", "list", "picture"]
 
 
 @dataclass
 class HeadingBlock:
     kind: Literal["heading"]
-    level: int                  # 0=title, 1+=section depth
+    level: int  # 0=title, 1+=section depth
     text: str
-    page_no: int                # 1-based
-    heading_path: list[str]     # ancestors (excluding self)
+    page_no: int  # 1-based
+    heading_path: list[str]  # ancestors (excluding self)
 
 
 @dataclass
@@ -38,9 +37,9 @@ class ParagraphBlock:
 @dataclass
 class TableBlock:
     kind: Literal["table"]
-    headers: list[str]          # column headers (empty if none detected)
-    rows: list[list[str]]       # cell strings, row-major
-    caption: str                # caption / table title if any
+    headers: list[str]  # column headers (empty if none detected)
+    rows: list[list[str]]  # cell strings, row-major
+    caption: str  # caption / table title if any
     page_no: int
     heading_path: list[str]
 
@@ -48,7 +47,7 @@ class TableBlock:
 @dataclass
 class ListBlock:
     kind: Literal["list"]
-    items: list[str]            # flat list, nesting collapsed
+    items: list[str]  # flat list, nesting collapsed
     ordered: bool
     page_no: int
     heading_path: list[str]
@@ -59,17 +58,16 @@ class PictureBlock:
     """Carries the rendered PIL image so the VLM stage can describe it.
     `bbox_area_pct` is for downstream filtering / logging only.
     """
+
     kind: Literal["picture"]
-    pil_image: Any              # PIL.Image.Image (RGB)
+    pil_image: Any  # PIL.Image.Image (RGB)
     bbox_area_pct: float
     page_no: int
     heading_path: list[str]
-    self_ref: str = ""          # extractor-specific id, debugging only
+    self_ref: str = ""  # extractor-specific id, debugging only
 
 
-Block = (
-    HeadingBlock | ParagraphBlock | TableBlock | ListBlock | PictureBlock
-)
+Block = HeadingBlock | ParagraphBlock | TableBlock | ListBlock | PictureBlock
 
 
 @dataclass
@@ -93,5 +91,6 @@ class Extractor(Protocol):
     name: str
     version: str
 
-    def extract(self, pdf_path: str | Path) -> ExtractedDoc:
-        ...
+    def extract(self, pdf_path: str | Path) -> ExtractedDoc: ...
+
+    async def extract_async(self, pdf_path: str | Path) -> ExtractedDoc: ...

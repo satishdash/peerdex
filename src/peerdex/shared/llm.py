@@ -67,11 +67,11 @@ async def cached_completion(
             log.debug(f"[llm] cache hit {key[:12]}")
             return ChatCompletion.model_validate(hit)
 
-    kwargs: dict[str, Any] = dict(
-        model=model,
-        messages=messages,
-        temperature=temperature,
-    )
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+    }
     if seed is not None:
         kwargs["seed"] = seed
     if response_format is not None:

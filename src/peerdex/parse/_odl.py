@@ -23,7 +23,6 @@ from peerdex.parse._contract import (
     ListBlock,
     PageInfo,
     ParagraphBlock,
-    PictureBlock,
     TableBlock,
 )
 from peerdex.shared.logging import get_logger
@@ -47,9 +46,7 @@ def _cell_text(cell: dict) -> str:
     return " ".join(parts)
 
 
-def _table_element_to_block(
-    el: dict, heading_path: list[str]
-) -> TableBlock | None:
+def _table_element_to_block(el: dict, heading_path: list[str]) -> TableBlock | None:
     """Convert an ODL ``table`` element to a TableBlock."""
     rows_raw = el.get("rows", [])
     if not rows_raw:
@@ -96,7 +93,7 @@ def _heading_level(el: dict) -> int:
         return mapping[raw]
     try:
         return int(raw)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 1
 
 
@@ -131,11 +128,15 @@ def _json_to_extracted_doc(data: dict) -> ExtractedDoc:
                 continue
             lvl = _heading_level(el)
             heading_stack[:] = [h for h in heading_stack if h[0] < lvl]
-            blocks.append(HeadingBlock(
-                kind="heading", level=lvl, text=txt,
-                page_no=page_no,
-                heading_path=[t for _, t in heading_stack if t],
-            ))
+            blocks.append(
+                HeadingBlock(
+                    kind="heading",
+                    level=lvl,
+                    text=txt,
+                    page_no=page_no,
+                    heading_path=[t for _, t in heading_stack if t],
+                )
+            )
             heading_stack.append((lvl, txt))
             continue
 
@@ -144,10 +145,14 @@ def _json_to_extracted_doc(data: dict) -> ExtractedDoc:
             txt = el.get("content", "").strip()
             if not txt:
                 continue
-            blocks.append(ParagraphBlock(
-                kind="paragraph", text=txt,
-                page_no=page_no, heading_path=heading_path,
-            ))
+            blocks.append(
+                ParagraphBlock(
+                    kind="paragraph",
+                    text=txt,
+                    page_no=page_no,
+                    heading_path=heading_path,
+                )
+            )
             continue
 
         # ── tables ──
@@ -173,10 +178,15 @@ def _json_to_extracted_doc(data: dict) -> ExtractedDoc:
                 if txt:
                     items.append(txt)
             if items:
-                blocks.append(ListBlock(
-                    kind="list", items=items, ordered=ordered,
-                    page_no=page_no, heading_path=heading_path,
-                ))
+                blocks.append(
+                    ListBlock(
+                        kind="list",
+                        items=items,
+                        ordered=ordered,
+                        page_no=page_no,
+                        heading_path=heading_path,
+                    )
+                )
             continue
 
         # ── images ──
@@ -197,16 +207,21 @@ def _json_to_extracted_doc(data: dict) -> ExtractedDoc:
             for kid in el.get("kids", []):
                 txt = kid.get("content", "").strip()
                 if txt:
-                    blocks.append(ParagraphBlock(
-                        kind="paragraph", text=txt,
-                        page_no=kid.get("page number", page_no),
-                        heading_path=heading_path,
-                    ))
+                    blocks.append(
+                        ParagraphBlock(
+                            kind="paragraph",
+                            text=txt,
+                            page_no=kid.get("page number", page_no),
+                            heading_path=heading_path,
+                        )
+                    )
             continue
 
     # ── pages ──
     # ODL doesn't have a dedicated pages section; infer from elements.
-    page_nos = sorted({el.get("page number", 0) for el in data.get("kids", []) if el.get("page number")})
+    page_nos = sorted(
+        {el.get("page number", 0) for el in data.get("kids", []) if el.get("page number")}
+    )
     pages = [PageInfo(page_no=p, width=0.0, height=0.0) for p in page_nos]
 
     log.info(
@@ -258,9 +273,7 @@ class ODLExtractor:
             # ODL writes <stem>.json in output_dir.
             json_files = list(Path(tmp).glob("*.json"))
             if not json_files:
-                raise RuntimeError(
-                    f"ODL produced no JSON output for {pdf_path}"
-                )
+                raise RuntimeError(f"ODL produced no JSON output for {pdf_path}")
             data = json.loads(json_files[0].read_text())
 
         return _json_to_extracted_doc(data)

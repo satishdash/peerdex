@@ -22,8 +22,8 @@ import fsspec
 
 from peerdex.shared.settings import get_settings
 
-
 # ---------- protocol ----------
+
 
 class CacheBackend(ABC):
     @abstractmethod
@@ -37,6 +37,7 @@ class CacheBackend(ABC):
 
 
 # ---------- fsspec backend (default) ----------
+
 
 class FsspecBackend(CacheBackend):
     def _fs(self) -> tuple[Any, str]:
@@ -82,6 +83,7 @@ def _get_backend() -> CacheBackend:
 
 # ---------- fsspec helpers (kept for VLM cache / join_path users) ----------
 
+
 @lru_cache(maxsize=1)
 def fs_and_root() -> tuple[Any, str]:
     uri = get_settings().storage.cache_uri
@@ -95,6 +97,7 @@ def join_path(*parts: str) -> str:
 
 
 # ---------- public API (delegates to active backend) ----------
+
 
 def hash_key(*parts: str | bytes) -> str:
     h = hashlib.sha256()

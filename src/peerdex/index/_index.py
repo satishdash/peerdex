@@ -1,18 +1,11 @@
 """Index layer: ExtractedDoc -> persisted LlamaIndex VectorStoreIndex.
 
-Storage:
-  - LanceDB at settings.storage.lancedb_uri (table = settings.storage.table_name)
-  - Persisted docstore + index_store at settings.storage.cache_uri/llama-index/
-
-Public API:
-  - index_doc(pdf_path, company, year, report_type)  -> dict (idempotent)
-  - load_index() -> VectorStoreIndex (re-opens existing index)
-
-Idempotency: re-indexing the same (company, year, report_type) deletes the
-prior LanceDB rows for that doc_id before inserting -- so re-running with
-an updated PDF or a prompt_version bump replaces cleanly without dupes.
+Storage is LanceDB (vector rows) plus a persisted docstore/index_store.
+doc_id is content-addressed, so re-indexing a file first deletes its prior
+LanceDB rows and replaces them cleanly.
 """
 
+from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -24,11 +17,17 @@ from llama_index.core.storage.index_store import SimpleIndexStore
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.vector_stores.lancedb import LanceDBVectorStore
 
-from peerdex.chunk import Chunker
+from peerdex.chunk import HierarchicalChunker
 from peerdex.parse import get_extractor
 from peerdex.shared.ids import doc_id as make_doc_id
 from peerdex.shared.logging import get_logger
-from peerdex.shared.schema import ReportType
+from peerdex.shared.metadata import (
+    CompositeAttributeSource,
+    DocumentMetadata,
+    ExplicitAttributeSource,
+    Scalar,
+    SidecarAttributeSource,
+)
 from peerdex.shared.settings import get_settings
 
 log = get_logger("index")
@@ -90,60 +89,83 @@ def _delete_existing_doc(doc_id: str) -> None:
         log.debug(f"[index] delete prior rows skipped: {e}")
 
 
+def _resolve(pdf_path: str | Path) -> Path:
+    return Path(pdf_path).resolve()
+
+
+def _document_metadata(
+    pdf_abs: Path,
+    company: str,
+    year: int,
+    extractor_name: str,
+    attributes: Mapping[str, Scalar] | None,
+) -> DocumentMetadata:
+    """Compose the document metadata (sidecar first, explicit wins)."""
+    source = CompositeAttributeSource(
+        [SidecarAttributeSource(), ExplicitAttributeSource(dict(attributes or {}))]
+    )
+    return DocumentMetadata(
+        company=company,
+        year=int(year),
+        source_uri=str(pdf_abs),
+        extractor=extractor_name,
+        attributes=source.load(pdf_abs),
+    )
+
+
 async def index_doc(
     pdf_path: str | Path,
     *,
     company: str,
     year: int,
-    report_type: ReportType | str,
     extractor: str | None = None,
+    attributes: Mapping[str, Scalar] | None = None,
 ) -> dict[str, Any]:
-    """Extract -> chunk -> embed+store. Idempotent per (company, year, type)."""
-    rt = ReportType(str(report_type))
-    did = make_doc_id(company, year, rt)
-    pdf_abs = str(Path(pdf_path).resolve())
+    """Extract -> chunk -> embed+store. Idempotent per source file and extractor."""
+    pdf_abs: str = str(_resolve(pdf_path))
 
-    log.info(f"[index] doc_id={did} company={company} year={year} type={rt.value}")
+    extractor_inst = get_extractor(extractor)
+    if hasattr(extractor_inst, "extract_async"):
+        ed = await extractor_inst.extract_async(pdf_abs)
+    else:
+        ed = extractor_inst.extract(pdf_abs)
 
-    # 1) Extract (sync — CPU-bound Docling work, no benefit from async)
-    ed = get_extractor(extractor).extract(pdf_abs)
+    extractor_name: str = str(ed.source_meta["extractor_name"])
+    doc_meta = _document_metadata(Path(pdf_abs), company, year, extractor_name, attributes)
+    did = make_doc_id(company, pdf_abs, extractor_name)
 
-    # 2) Chunk (async — VLM calls for pictures are IO-bound)
-    nodes = await Chunker().chunk(
-        ed,
-        doc_id=did,
-        company=company,
-        year=int(year),
-        report_type=rt,
-        source_uri=pdf_abs,
+    log.info(
+        f"[index] doc_id={did} company={doc_meta.company} year={doc_meta.year} "
+        f"extractor={doc_meta.extractor} attributes={doc_meta.attributes} source={pdf_abs}"
     )
 
-    # 3) Wipe prior + insert
+    parent_nodes, child_nodes = await HierarchicalChunker().chunk(
+        ed,
+        doc_id=did,
+        metadata=doc_meta,
+    )
+
     _delete_existing_doc(did)
     storage = storage_context()
     embed = embed_model()
 
-    # VectorStoreIndex with insert_batch_size kept implicit (LI default).
-    idx = VectorStoreIndex(
-        nodes=nodes,
+    VectorStoreIndex(
+        nodes=child_nodes,
         storage_context=storage,
         embed_model=embed,
         show_progress=True,
     )
-    # LanceDBVectorStore.stores_text=True, so VectorStoreIndex skips the
-    # docstore. We still need the nodes there for downstream BM25
-    # (BM25Retriever.from_defaults(nodes=docstore.values())) and for any
-    # future reranker that wants raw text without re-querying Lance.
-    storage.docstore.add_documents(nodes, allow_update=True)
+    storage.docstore.add_documents(parent_nodes + child_nodes, allow_update=True)
     storage.persist(persist_dir=_persist_dir())
 
-    log.info(f"[index] persisted {len(nodes)} nodes (doc_id={did})")
+    log.info(f"[index] persisted {len(child_nodes)} nodes (doc_id={did})")
     return {
         "doc_id": did,
-        "nodes": len(nodes),
-        "tables": sum(1 for n in nodes if n.metadata.get("is_table")),
-        "figures": sum(1 for n in nodes if n.metadata.get("is_figure")),
+        "nodes": len(child_nodes),
+        "tables": sum(1 for n in child_nodes if n.metadata.get("is_table")),
+        "figures": sum(1 for n in child_nodes if n.metadata.get("is_figure")),
         "extractor": ed.source_meta.get("extractor_name"),
+        "attributes": doc_meta.attributes,
     }
 
 

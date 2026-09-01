@@ -15,8 +15,8 @@ Two decorator factories:
 Plus token-bucket limiters for the shared OpenAI RPM/TPM budget.
 """
 
+from collections.abc import Callable
 from functools import lru_cache
-from typing import Callable
 
 from aiolimiter import AsyncLimiter
 from pyresilience import (
@@ -30,8 +30,8 @@ from pyresilience import (
 
 from peerdex.shared.settings import get_settings
 
-
 # ---------- shared OpenAI RPM/TPM limiters ----------
+
 
 @lru_cache(maxsize=1)
 def openai_rpm_limiter() -> AsyncLimiter:
@@ -46,6 +46,7 @@ def openai_tpm_limiter() -> AsyncLimiter:
 
 
 # ---------- decorator factories ----------
+
 
 def light_decorator():
     """Retry + Timeout for cheap LLM calls. Caller supplies its own fallback."""
@@ -76,7 +77,8 @@ def vlm_decorator(*, on_failure: Callable[[BaseException], object]):
         ),
         timeout=TimeoutConfig(seconds=s.resilience.timeout_seconds),
         circuit_breaker=CircuitBreakerConfig(
-            failure_threshold=10, recovery_timeout=30.0,
+            failure_threshold=10,
+            recovery_timeout=30.0,
         ),
         fallback=FallbackConfig(handler=on_failure),
     )

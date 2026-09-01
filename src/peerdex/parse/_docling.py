@@ -133,7 +133,7 @@ def _table_to_block(item: Any, doc: Any, heading_path: list[str]) -> TableBlock 
 # ---------- the extractor ----------
 class DoclingExtractor:
     name = "docling"
-    version = "2.90"   # bump when behaviour changes; goes into cache key
+    version = "2.90"  # bump when behaviour changes; goes into cache key
 
     def extract(self, pdf_path: str | Path) -> ExtractedDoc:
         log.info(f"extracting {pdf_path}")
@@ -156,9 +156,11 @@ def _to_extracted_doc(doc: Any) -> ExtractedDoc:
     for page_no, page in doc.pages.items():
         if page.size is None:
             continue
-        pages.append(PageInfo(page_no=int(page_no),
-                              width=float(page.size.width),
-                              height=float(page.size.height)))
+        pages.append(
+            PageInfo(
+                page_no=int(page_no), width=float(page.size.width), height=float(page.size.height)
+            )
+        )
 
     blocks: list = []
     heading_stack: list[tuple[int, str]] = []  # (level, title)
@@ -175,10 +177,15 @@ def _to_extracted_doc(doc: Any) -> ExtractedDoc:
             if not txt:
                 continue
             heading_stack[:] = [(0, txt)]
-            blocks.append(HeadingBlock(
-                kind="heading", level=0, text=txt,
-                page_no=_page_no(item), heading_path=[],
-            ))
+            blocks.append(
+                HeadingBlock(
+                    kind="heading",
+                    level=0,
+                    text=txt,
+                    page_no=_page_no(item),
+                    heading_path=[],
+                )
+            )
             continue
 
         if cls == "SectionHeaderItem":
@@ -187,11 +194,15 @@ def _to_extracted_doc(doc: Any) -> ExtractedDoc:
             if not txt:
                 continue
             heading_stack[:] = [h for h in heading_stack if h[0] < lvl]
-            blocks.append(HeadingBlock(
-                kind="heading", level=lvl, text=txt,
-                page_no=_page_no(item),
-                heading_path=[t for _, t in heading_stack if t],
-            ))
+            blocks.append(
+                HeadingBlock(
+                    kind="heading",
+                    level=lvl,
+                    text=txt,
+                    page_no=_page_no(item),
+                    heading_path=[t for _, t in heading_stack if t],
+                )
+            )
             heading_stack.append((lvl, txt))
             continue
 
@@ -199,10 +210,14 @@ def _to_extracted_doc(doc: Any) -> ExtractedDoc:
             txt = (item.text or "").strip()
             if not txt:
                 continue
-            blocks.append(ParagraphBlock(
-                kind="paragraph", text=txt,
-                page_no=_page_no(item), heading_path=heading_path,
-            ))
+            blocks.append(
+                ParagraphBlock(
+                    kind="paragraph",
+                    text=txt,
+                    page_no=_page_no(item),
+                    heading_path=heading_path,
+                )
+            )
             continue
 
         if cls == "ListItem":
@@ -211,16 +226,24 @@ def _to_extracted_doc(doc: Any) -> ExtractedDoc:
                 continue
             # Coalesce adjacent ListItems into one ListBlock when possible.
             ordered = bool(getattr(item, "enumerated", False))
-            if blocks and isinstance(blocks[-1], ListBlock) \
-                    and blocks[-1].page_no == _page_no(item) \
-                    and blocks[-1].heading_path == heading_path \
-                    and blocks[-1].ordered == ordered:
+            if (
+                blocks
+                and isinstance(blocks[-1], ListBlock)
+                and blocks[-1].page_no == _page_no(item)
+                and blocks[-1].heading_path == heading_path
+                and blocks[-1].ordered == ordered
+            ):
                 blocks[-1].items.append(txt)
             else:
-                blocks.append(ListBlock(
-                    kind="list", items=[txt], ordered=ordered,
-                    page_no=_page_no(item), heading_path=heading_path,
-                ))
+                blocks.append(
+                    ListBlock(
+                        kind="list",
+                        items=[txt],
+                        ordered=ordered,
+                        page_no=_page_no(item),
+                        heading_path=heading_path,
+                    )
+                )
             continue
 
         if cls == "TableItem":
@@ -248,14 +271,16 @@ def _to_extracted_doc(doc: Any) -> ExtractedDoc:
             if img is None:
                 pic_drop_noimg += 1
                 continue
-            blocks.append(PictureBlock(
-                kind="picture",
-                pil_image=img,
-                bbox_area_pct=float(area),
-                page_no=_page_no(item),
-                heading_path=heading_path,
-                self_ref=getattr(item, "self_ref", "") or "",
-            ))
+            blocks.append(
+                PictureBlock(
+                    kind="picture",
+                    pil_image=img,
+                    bbox_area_pct=float(area),
+                    page_no=_page_no(item),
+                    heading_path=heading_path,
+                    self_ref=getattr(item, "self_ref", "") or "",
+                )
+            )
             pic_kept += 1
             continue
 

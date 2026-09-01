@@ -4,10 +4,11 @@ Provides a registry so callers can request an extractor by name
 (``get_extractor("docling")``). New extractors just implement the
 ``Extractor`` protocol and register via ``register_extractor()``.
 """
+
 from peerdex.parse._contract import (
     Block,
-    Extractor,
     ExtractedDoc,
+    Extractor,
     HeadingBlock,
     ListBlock,
     PageInfo,
@@ -16,6 +17,7 @@ from peerdex.parse._contract import (
     TableBlock,
 )
 from peerdex.parse._docling import DoclingExtractor, from_docling_document
+from peerdex.parse._kreuzberg import KreuzbergExtractor
 from peerdex.parse._liteparse import LiteParseExtractor
 from peerdex.parse._odl import ODLExtractor
 
@@ -32,9 +34,7 @@ def get_extractor(name: str | None = None) -> Extractor:
     """Return an extractor instance by name. Default is ``docling``."""
     name = name or "docling"
     if name not in _REGISTRY:
-        raise ValueError(
-            f"unknown extractor '{name}'. available: {sorted(_REGISTRY)}"
-        )
+        raise ValueError(f"unknown extractor '{name}'. available: {sorted(_REGISTRY)}")
     return _REGISTRY[name]()
 
 
@@ -46,14 +46,24 @@ def available_extractors() -> list[str]:
 register_extractor("docling", DoclingExtractor)
 register_extractor("liteparse", LiteParseExtractor)
 register_extractor("odl", ODLExtractor)
+register_extractor("kreuzberg", KreuzbergExtractor)
 
 
 __all__ = [
-    "Extractor", "ExtractedDoc",
-    "Block", "HeadingBlock", "ParagraphBlock", "TableBlock",
-    "ListBlock", "PictureBlock", "PageInfo",
-    "DoclingExtractor", "from_docling_document",
+    "Block",
+    "DoclingExtractor",
+    "ExtractedDoc",
+    "Extractor",
+    "HeadingBlock",
+    "ListBlock",
     "LiteParseExtractor",
     "ODLExtractor",
-    "get_extractor", "register_extractor", "available_extractors",
+    "PageInfo",
+    "ParagraphBlock",
+    "PictureBlock",
+    "TableBlock",
+    "available_extractors",
+    "from_docling_document",
+    "get_extractor",
+    "register_extractor",
 ]

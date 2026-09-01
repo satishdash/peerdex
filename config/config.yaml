@@ -16,6 +16,8 @@ docling:
 chunker:
   tokenizer: cl100k_base
   max_tokens: 512
+  parent_chunk_tokens: 1024
+  child_chunk_tokens: 256
 
 embed:
   model: ${OPENAI_EMBED_MODEL:-text-embedding-3-small}
@@ -24,7 +26,6 @@ embed:
 
 llm:
   model: ${OPENAI_LLM_MODEL:-gpt-5.4-mini}
-  router_model: ${OPENAI_ROUTER_MODEL:-gpt-5.4-nano}
   fusion_model: ${OPENAI_FUSION_MODEL:-gpt-5.4-nano}
   hyde_model: ${OPENAI_HYDE_MODEL:-gpt-5.4-nano}
   reranker_model: ${OPENAI_RERANKER_MODEL:-gpt-5.4-mini}

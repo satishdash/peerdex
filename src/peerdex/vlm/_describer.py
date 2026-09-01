@@ -1,7 +1,7 @@
 """OpenAI Vision describer.
 
-One async method: describe(refs, report_type, doc_id) → list[dict|None].
-Each entry mirrors the JSON schema enforced by the per-type prompt:
+One async method: describe(refs, doc_id) → list[dict|None].
+Each entry mirrors the JSON schema enforced by the ingest prompt:
   {has_quant_data, title, description, values:[{label,value,unit}]}
 or None if the call permanently failed (also written to DLQ).
 
@@ -21,13 +21,12 @@ from typing import Any
 from openai import AsyncOpenAI
 
 from peerdex.shared.logging import get_logger
-from peerdex.shared.prompts import prompts_for
+from peerdex.shared.prompts import PROMPTS
 from peerdex.shared.resilience import (
     openai_rpm_limiter,
     openai_tpm_limiter,
     vlm_decorator,
 )
-from peerdex.shared.schema import ReportType
 from peerdex.shared.settings import get_settings
 from peerdex.vlm import _cache
 
@@ -36,11 +35,11 @@ log = get_logger("vlm.describer")
 
 @dataclass
 class PictureRef:
-    page_no: int                     # 1-based
-    heading_path: list[str]          # ancestor section titles, root → leaf
-    pil_image: Any                   # PIL.Image (RGB)
-    bbox_area_pct: float             # of page area, for logging only
-    self_ref: str = ""               # docling self_ref, useful for debugging
+    page_no: int  # 1-based
+    heading_path: list[str]  # ancestor section titles, root → leaf
+    pil_image: Any  # PIL.Image (RGB)
+    bbox_area_pct: float  # of page area, for logging only
+    self_ref: str = ""  # docling self_ref, useful for debugging
     extra: dict = field(default_factory=dict)
 
 
@@ -63,7 +62,7 @@ def _parse_response(raw: str) -> dict[str, Any]:
             {
                 "label": str(v.get("label") or "").strip(),
                 "value": str(v.get("value") or "").strip(),
-                "unit":  str(v.get("unit")  or "").strip(),
+                "unit": str(v.get("unit") or "").strip(),
             }
             for v in (data.get("values") or [])
             if isinstance(v, dict)
@@ -72,17 +71,17 @@ def _parse_response(raw: str) -> dict[str, Any]:
 
 
 class OpenAIPictureDescriber:
-    def __init__(self, client: AsyncOpenAI) -> None:
+    def __init__(self, client: AsyncOpenAI, model: str | None = None) -> None:
         self._client = client
+        self._model: str = model or get_settings().vlm.model
 
-    async def _describe_one(self, ref: PictureRef, *,
-                            report_type: ReportType | str | None,
-                            doc_id: str) -> dict[str, Any] | None:
+    async def _describe_one(self, ref: PictureRef, *, doc_id: str) -> dict[str, Any] | None:
         s = get_settings()
         png = _png_bytes(ref.pil_image, s.vlm.image_max_dim)
-        prompts = prompts_for(report_type)
         key = _cache.cache_key(
-            png, vlm_model=s.vlm.model, prompt_version=prompts.prompt_version,
+            png,
+            vlm_model=self._model,
+            prompt_version=PROMPTS.prompt_version,
         )
 
         cached = _cache.get(key)
@@ -92,7 +91,8 @@ class OpenAIPictureDescriber:
         # ---- inline call wrapped in vlm_decorator + RPM/TPM bucket ----
         def _on_failure(exc: BaseException, *_a, **_kw):
             _cache.dlq_put(
-                doc_id, key,
+                doc_id,
+                key,
                 {
                     "page_no": ref.page_no,
                     "heading_path": ref.heading_path,
@@ -110,19 +110,28 @@ class OpenAIPictureDescriber:
             async with rpm:
                 await tpm.acquire(approx_tokens)
                 resp = await self._client.chat.completions.create(
-                    model=s.vlm.model,
+                    model=self._model,
                     temperature=0,
                     response_format={"type": "json_object"},
                     messages=[
-                        {"role": "system", "content": prompts.ingest_vlm_prompt},
-                        {"role": "user", "content": [
-                            {"type": "text",
-                             "text": f"Figure on page {ref.page_no}, "
-                                     f"section: {' > '.join(ref.heading_path) or 'root'}."},
-                            {"type": "image_url",
-                             "image_url": {"url": "data:image/png;base64,"
-                                                  + base64.b64encode(png).decode()}},
-                        ]},
+                        {"role": "system", "content": PROMPTS.ingest_vlm_prompt},
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": f"Figure on page {ref.page_no}, "
+                                    f"section: {' > '.join(ref.heading_path) or 'root'}.",
+                                },
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": "data:image/png;base64,"
+                                        + base64.b64encode(png).decode()
+                                    },
+                                },
+                            ],
+                        },
                     ],
                 )
             return _parse_response(resp.choices[0].message.content or "{}")
@@ -132,13 +141,8 @@ class OpenAIPictureDescriber:
             _cache.put(key, result)
         return result
 
-    async def describe(self, refs: list[PictureRef], *,
-                       report_type: ReportType | str | None,
-                       doc_id: str) -> list[dict[str, Any] | None]:
+    async def describe(self, refs: list[PictureRef], *, doc_id: str) -> list[dict[str, Any] | None]:
         if not refs:
             return []
-        log.info(f"[describer] {len(refs)} pictures, model={get_settings().vlm.model}")
-        return await asyncio.gather(*(
-            self._describe_one(r, report_type=report_type, doc_id=doc_id)
-            for r in refs
-        ))
+        log.info(f"[describer] {len(refs)} pictures, model={self._model}")
+        return await asyncio.gather(*(self._describe_one(r, doc_id=doc_id) for r in refs))
