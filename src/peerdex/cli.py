@@ -13,7 +13,13 @@ from rich.rule import Rule
 from rich.table import Table
 
 from peerdex.shared.logging import configure_logging
-from peerdex.shared.metadata import KeyValueParser, Scalar
+from peerdex.shared.metadata import (
+    KeyValueParser,
+    Scalar,
+    ScalarSetValueParser,
+    ScalarValueParser,
+    ValueParser,
+)
 
 app = typer.Typer(help="peerdex - peer-doc agentic RAG", no_args_is_help=True)
 console = Console()
@@ -24,9 +30,9 @@ def _root() -> None:
     configure_logging()
 
 
-def _parse_kv(pairs: list[str] | None) -> dict[str, Scalar]:
+def _parse_kv[T](pairs: list[str] | None, values: ValueParser[T]) -> dict[str, T]:
     try:
-        return KeyValueParser().parse(pairs or [])
+        return KeyValueParser(values).parse(pairs or [])
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
@@ -47,7 +53,7 @@ def index(
     """Extract -> chunk -> embed+store the given PDF."""
     from peerdex.index import index_doc
 
-    attributes: dict[str, Scalar] = _parse_kv(meta)
+    attributes: dict[str, Scalar] = _parse_kv(meta, ScalarValueParser())
     try:
         result = asyncio.run(
             index_doc(
@@ -65,19 +71,27 @@ def ask(
     company: Annotated[str, typer.Option("--company", "-c")],
     filters: Annotated[
         list[str] | None,
-        typer.Option("--filter", "-f", help="KEY=VALUE metadata filter, repeatable"),
+        typer.Option(
+            "--filter",
+            "-f",
+            help="KEY=VALUE filter, repeatable; KEY=a,b matches either value, \\, escapes a comma",
+        ),
     ] = None,
     top_k: Annotated[int, typer.Option("--top-k", "-k", help="citations to display")] = 5,
 ) -> None:
     """Agentic answer: plan -> retrieve -> answer -> reflect/retry -> emit."""
-    asyncio.run(_run_one(q, company=company, filters=_parse_kv(filters), top_k=top_k))
+    asyncio.run(
+        _run_one(
+            q, company=company, filters=_parse_kv(filters, ScalarSetValueParser()), top_k=top_k
+        )
+    )
 
 
 async def _run_one(
     q: str,
     *,
     company: str,
-    filters: dict[str, Scalar],
+    filters: dict[str, tuple[Scalar, ...]],
     top_k: int,
 ) -> None:
     """Run one question through the agent and pretty-print the result."""
@@ -127,7 +141,11 @@ def suite(
     company: Annotated[str, typer.Option("--company", "-c")],
     filters: Annotated[
         list[str] | None,
-        typer.Option("--filter", "-f", help="KEY=VALUE metadata filter, repeatable"),
+        typer.Option(
+            "--filter",
+            "-f",
+            help="KEY=VALUE filter, repeatable; KEY=a,b matches either value, \\, escapes a comma",
+        ),
     ] = None,
     top_k: Annotated[int, typer.Option("--top-k", "-k")] = 5,
 ) -> None:
@@ -144,7 +162,7 @@ def suite(
     if not qs:
         raise typer.BadParameter(f"suite '{name}' has no questions.")
 
-    parsed_filters: dict[str, Scalar] = _parse_kv(filters)
+    parsed_filters: dict[str, tuple[Scalar, ...]] = _parse_kv(filters, ScalarSetValueParser())
     console.print(
         Panel.fit(
             f"suite=[b]{name}[/b]  company=[b]{company}[/b]  "

@@ -13,8 +13,13 @@ from peerdex.shared.metadata import (
     KeyValueParser,
     MetadataVisibility,
     Scalar,
+    ScalarSetValueParser,
+    ScalarValueParser,
     SidecarAttributeSource,
 )
+
+SCALAR: ScalarValueParser = ScalarValueParser()
+SCALAR_SET: ScalarSetValueParser = ScalarSetValueParser()
 
 REAL_SIDECAR_PAYLOAD: dict[str, dict[str, Scalar]] = {
     "Globex PLC/f797953b.pdf": {
@@ -49,8 +54,7 @@ def test_given_valid_attributes_when_constructed_then_identity_normalized() -> N
     assert meta.source_uri == "/docs/a.pdf"
     assert meta.extractor == "liteparse"
     assert meta.attributes == {"benchmark": 1, "title": "T"}
-    assert isinstance(meta.attributes["benchmark"], int)
-    assert not isinstance(meta.attributes["benchmark"], bool)
+    assert type(meta.attributes["benchmark"]) is int
 
 
 @pytest.mark.parametrize(
@@ -121,45 +125,137 @@ def test_given_composite_sources_when_loaded_then_later_source_wins(tmp_path: Pa
 
 
 @pytest.mark.parametrize(
-    ("pair", "expected"),
+    ("values", "pair", "expected"),
     [
-        ("benchmark=true", {"benchmark": True}),
-        ("benchmark=FALSE", {"benchmark": False}),
-        ("year=2025", {"year": 2025}),
-        ("title=Annual Report 2025", {"title": "Annual Report 2025"}),
-        ("ratio=1.5", {"ratio": "1.5"}),
-        ("k=v=w", {"k": "v=w"}),
+        (SCALAR, "benchmark=true", {"benchmark": True}),
+        (SCALAR, "benchmark=FALSE", {"benchmark": False}),
+        (SCALAR, "year=2025", {"year": 2025}),
+        (SCALAR, "title=Annual Report 2025", {"title": "Annual Report 2025"}),
+        (SCALAR, "ratio=1.5", {"ratio": "1.5"}),
+        (SCALAR, "k=v=w", {"k": "v=w"}),
+        (SCALAR, "title=Index, 2025", {"title": "Index, 2025"}),
+        (SCALAR_SET, "year=2025", {"year": (2025,)}),
+        (SCALAR_SET, "year=2023,2024", {"year": (2023, 2024)}),
+        (SCALAR_SET, "benchmark=true,FALSE", {"benchmark": (True, False)}),
+        (SCALAR_SET, "type=Annual,Data Index", {"type": ("Annual", "Data Index")}),
+        (SCALAR_SET, "title=Index\\, 2025", {"title": ("Index, 2025",)}),
+        (SCALAR_SET, "title=Index\\, 2025,Annual", {"title": ("Index, 2025", "Annual")}),
+        (SCALAR_SET, "k=v=w,x", {"k": ("v=w", "x")}),
+        (SCALAR_SET, "year=2023,draft", {"year": ("2023", "draft")}),
     ],
 )
-def test_given_key_value_pair_when_parsed_then_typed_scalar(
-    pair: str, expected: dict[str, Scalar]
+def test_given_key_value_pair_when_parsed_then_typed_value(
+    values: ScalarValueParser | ScalarSetValueParser,
+    pair: str,
+    expected: dict[str, Scalar] | dict[str, tuple[Scalar, ...]],
 ) -> None:
-    assert KeyValueParser().parse([pair]) == expected
+    assert KeyValueParser(values).parse([pair]) == expected
 
 
-def test_given_multiple_pairs_when_parsed_then_all_present() -> None:
-    parsed: dict[str, Scalar] = KeyValueParser().parse(["benchmark=true", "year=2024"])
-    assert parsed == {"benchmark": True, "year": 2024}
+@pytest.mark.parametrize(
+    ("values", "pairs", "expected"),
+    [
+        (SCALAR, ["benchmark=true", "year=2024"], {"benchmark": True, "year": 2024}),
+        (
+            SCALAR_SET,
+            ["year=2023,2024", "region=emea"],
+            {"year": (2023, 2024), "region": ("emea",)},
+        ),
+    ],
+)
+def test_given_multiple_pairs_when_parsed_then_all_present(
+    values: ScalarValueParser | ScalarSetValueParser,
+    pairs: list[str],
+    expected: dict[str, Scalar] | dict[str, tuple[Scalar, ...]],
+) -> None:
+    assert KeyValueParser(values).parse(pairs) == expected
 
 
 @pytest.mark.parametrize("pair", ["novalue", "=x"])
 def test_given_malformed_pair_when_parsed_then_rejected(pair: str) -> None:
     with pytest.raises(ValueError, match="KEY=VALUE"):
-        KeyValueParser().parse([pair])
+        KeyValueParser(SCALAR).parse([pair])
 
 
-def test_given_company_and_attributes_when_filter_built_then_pairs_canonical() -> None:
-    filt: AttributeFilter = AttributeFilter(" Globex ", {"benchmark": True, "year": 2024})
-    assert filt.pairs == {"company": "globex", "benchmark": 1, "year": 2024}
-    assert not isinstance(filt.pairs["benchmark"], bool)
+@pytest.mark.parametrize("values", [SCALAR, SCALAR_SET])
+def test_given_repeated_key_when_parsed_then_rejected(
+    values: ScalarValueParser | ScalarSetValueParser,
+) -> None:
+    with pytest.raises(ValueError, match="'year'"):
+        KeyValueParser(values).parse(["year=2023", "year=2024"])
+
+
+@pytest.mark.parametrize(
+    ("attributes", "expected"),
+    [
+        pytest.param(
+            {"benchmark": True, "year": 2024},
+            {"company": ("globex",), "benchmark": (1,), "year": (2024,)},
+            id="single-values",
+        ),
+        pytest.param(
+            {"year": [2023, 2024], "benchmark": (True, False)},
+            {"company": ("globex",), "year": (2023, 2024), "benchmark": (1, 0)},
+            id="multi-values",
+        ),
+    ],
+)
+def test_given_company_and_attributes_when_filter_built_then_pairs_canonical(
+    attributes: dict[str, Scalar | list[Scalar] | tuple[Scalar, ...]],
+    expected: dict[str, tuple[Scalar, ...]],
+) -> None:
+    filt: AttributeFilter = AttributeFilter(" Globex ", attributes)
+    assert filt.pairs == expected
+    assert {type(value) for values in filt.pairs.values() for value in values} == {str, int}
+
+
+@pytest.mark.parametrize("values", [[2023, "draft"], []])
+def test_given_unusable_value_set_when_filter_built_then_rejected(values: list[Scalar]) -> None:
+    with pytest.raises(ValueError, match="year"):
+        AttributeFilter("globex", {"year": values})
 
 
 @pytest.mark.parametrize(
     ("attributes", "metadata", "expected"),
     [
-        pytest.param(None, {"company": "globex", "year": 2023}, True, id="year-2023-passes"),
-        pytest.param(None, {"company": "globex", "year": 2025}, True, id="year-2025-passes"),
+        pytest.param(None, {"company": "globex", "year": 2023}, True, id="company-only"),
         pytest.param(None, {"company": "other", "year": 2025}, False, id="wrong-company"),
+        pytest.param(
+            {"year": [2023, 2024]},
+            {"company": "globex", "year": 2024},
+            True,
+            id="multi-value-member",
+        ),
+        pytest.param(
+            {"year": [2023, 2024]},
+            {"company": "globex", "year": 2025},
+            False,
+            id="multi-value-non-member",
+        ),
+        pytest.param(
+            {"year": [2023, 2024]},
+            {"company": "globex"},
+            False,
+            id="multi-value-key-missing",
+        ),
+        pytest.param(
+            {"year": [2023, 2024], "region": "emea"},
+            {"company": "globex", "year": 2023, "region": "emea"},
+            True,
+            id="and-across-keys-or-within-key",
+        ),
+        pytest.param(
+            {"year": [2023, 2024], "region": "emea"},
+            {"company": "globex", "year": 2023, "region": "apac"},
+            False,
+            id="and-across-keys-one-key-fails",
+        ),
+        pytest.param(
+            {"benchmark": [True, False]},
+            {"company": "globex", "benchmark": 0},
+            True,
+            id="bool-set-matches-canonical-node-value",
+        ),
         pytest.param(
             {"benchmark": True},
             {"company": "globex", "benchmark": 1},
@@ -181,7 +277,7 @@ def test_given_company_and_attributes_when_filter_built_then_pairs_canonical() -
     ],
 )
 def test_given_node_metadata_when_matched_then_predicate_decides(
-    attributes: dict[str, Scalar] | None,
+    attributes: dict[str, Scalar | list[Scalar]] | None,
     metadata: dict[str, Scalar],
     expected: bool,
 ) -> None:

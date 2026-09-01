@@ -10,9 +10,10 @@ Stages, all driven by the prompts in ``peerdex.shared.prompts``:
   3. LLM rerank + threshold: candidates scoring below ``min_rerank_score``
      are dropped, so the final list may be empty and the caller refuses.
 
-Filtering: ``company`` is always on; arbitrary attribute equality filters are
-optional. Both the dense ``MetadataFilters`` and the BM25 node predicate are
-derived from the same ``AttributeFilter`` so they can never diverge.
+Filtering: ``company`` is always on; arbitrary attribute filters are optional,
+each key admitting one or more values (AND across keys, OR within a key). Both
+the dense ``MetadataFilters`` and the BM25 node predicate are derived from the
+same ``AttributeFilter`` so they can never diverge.
 """
 
 from collections.abc import Mapping
@@ -28,6 +29,7 @@ from llama_index.core.retrievers import (
 )
 from llama_index.core.schema import NodeWithScore, QueryBundle
 from llama_index.core.vector_stores.types import (
+    FilterOperator,
     MetadataFilter,
     MetadataFilters,
 )
@@ -36,7 +38,7 @@ from llama_index.retrievers.bm25 import BM25Retriever
 from peerdex.index._index import embed_model, storage_context, vector_store
 from peerdex.shared.llm_llama import CachedLIOpenAI
 from peerdex.shared.logging import get_logger
-from peerdex.shared.metadata import AttributeFilter, Scalar
+from peerdex.shared.metadata import AttributeFilter, Scalar, Scalars
 from peerdex.shared.prompts import PROMPTS
 from peerdex.shared.resilience import light_decorator
 from peerdex.shared.settings import get_settings
@@ -90,7 +92,7 @@ class HybridRetriever:
         self,
         *,
         company: str,
-        attributes: Mapping[str, Scalar] | None = None,
+        attributes: Mapping[str, Scalars] | None = None,
         use_hyde: bool = True,
         min_rerank_score: float = 4.0,
     ) -> None:
@@ -124,12 +126,20 @@ class HybridRetriever:
 
     @staticmethod
     def dense_filters(attribute_filter: AttributeFilter) -> MetadataFilters:
-        """Project the shared predicate onto LanceDB metadata filters."""
+        """Project the shared predicate onto LanceDB filters: EQ for one value, IN for several."""
         return MetadataFilters(
             filters=[
-                MetadataFilter(key=key, value=value)
-                for key, value in attribute_filter.pairs.items()
+                HybridRetriever._dense_filter(key, values)
+                for key, values in attribute_filter.pairs.items()
             ]
+        )
+
+    @staticmethod
+    def _dense_filter(key: str, values: tuple[Scalar, ...]) -> MetadataFilter:
+        if len(values) == 1:
+            return MetadataFilter(key=key, value=values[0])
+        return MetadataFilter.from_dict(
+            {"key": key, "value": list(values), "operator": FilterOperator.IN}
         )
 
     def _dense(self) -> VectorIndexRetriever:
@@ -273,7 +283,7 @@ async def retrieve(
     query: str,
     *,
     company: str,
-    filters: Mapping[str, Scalar] | None = None,
+    filters: Mapping[str, Scalars] | None = None,
 ) -> RetrievalResult:
     """Module-level helper: one-shot hybrid retrieval with optional attribute filters."""
     return await HybridRetriever(company=company, attributes=filters).retrieve(query)

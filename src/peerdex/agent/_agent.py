@@ -14,7 +14,7 @@ from llama_index.core.schema import NodeWithScore
 
 from peerdex.scoring import NumericParser
 from peerdex.shared.logging import get_logger
-from peerdex.shared.metadata import Scalar
+from peerdex.shared.metadata import Scalars
 from peerdex.synthesize import Citation, CitedAnswer
 
 log = get_logger("agent")
@@ -344,7 +344,7 @@ async def answer(
     question: str,
     *,
     company: str,
-    filters: Mapping[str, Scalar] | None = None,
+    filters: Mapping[str, Scalars] | None = None,
     kind: QuestionKind | None = None,
 ) -> AgentAnswer:
     """One-shot agentic answer over the persisted index for one company."""
