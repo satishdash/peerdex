@@ -13,6 +13,8 @@ __pycache__/
 # Caches & data
 cache/
 lancedb/
+results/
+bench_extractors.json
 .deepeval/
 .deepeval_cache/
 .pytest_cache/

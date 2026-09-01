@@ -1,34 +1,30 @@
-# peerdex Makefile
-#
-# Usage:
-#   make install
-#   make index PDF=~/Documents/suncor_2025.pdf COMPANY=suncor YEAR=2025 TYPE=annual_report
-#   make index PDF=report.pdf COMPANY=acme YEAR=2025 TYPE=annual_report EXTRACTOR=docling
-#   make ask Q="Total number of employees?" COMPANY=suncor YEAR=2025
-#   make ask Q="Total revenue?" COMPANY=neste YEAR=2025 TYPE=annual_report
-#   make suite NAME=annual COMPANY=suncor YEAR=2025
-#   make eval COMPANY=suncor YEAR=2025
-#   make eval-retrieval COMPANY=suncor YEAR=2025
-#   make eval-synthesis COMPANY=suncor YEAR=2025
-#   make eval-vlm
-#   make eval-fast COMPANY=suncor YEAR=2025
-
 UV  ?= uv
 RAG := $(UV) run rag
 
-TYPE      ?=
-TOP_K     ?= 5
-Q         ?=
-PDF       ?=
-COMPANY   ?=
-YEAR      ?=
-NAME      ?=
-EXTRACTOR ?= docling
+TOP_K      ?= 5
+Q          ?=
+PDF        ?=
+PDF_DIR    ?=
+COMPANY    ?=
+YEAR       ?=
+NAME       ?= ref_bench01
+EXTRACTOR  ?= docling
+EXTRACTORS ?=
+VLM_MODEL  ?=
+META       ?=
+FILTER     ?=
+LIMIT      ?=
+RESULTS    ?= results/funnel
 
-.PHONY: install clean index ask suite \
-        eval eval-retrieval eval-synthesis eval-vlm eval-fast
+need_company = test -n "$(COMPANY)" || (echo "COMPANY=... required" && exit 2)
+need_year    = test -n "$(YEAR)"    || (echo "YEAR=... required"    && exit 2)
+need_pdfs    = test -n "$(PDF_DIR)$(PDF)" || (echo "PDF_DIR=/abs/dir or PDF=/abs/file.pdf required" && exit 2)
+year_filter  = $(if $(YEAR),-f year=$(YEAR))
+corpus_args  = $(if $(PDF_DIR),--pdf-dir "$(PDF_DIR)") $(if $(PDF),--pdf "$(PDF)") $(if $(EXTRACTORS),--extractors $(EXTRACTORS))
 
-# ---------- setup ----------
+.PHONY: install clean index ask suite test lint format \
+        eval eval-retrieval eval-synthesis eval-vlm eval-fast \
+        stage0 stage1 stage2 stage3 bench
 
 install:
 	$(UV) sync --all-extras
@@ -41,48 +37,75 @@ install:
 clean:
 	rm -rf cache lancedb
 
-# ---------- pipeline ----------
+test:
+	$(UV) run pytest tests/ -q -p no:deepeval -W error
+
+lint:
+	$(UV) run ruff check src tests && $(UV) run ruff format --check src tests
+
+format:
+	$(UV) run ruff check --fix src tests && $(UV) run ruff format src tests
 
 index:
-	@test -n "$(PDF)"     || (echo "PDF=... required"     && exit 2)
-	@test -n "$(COMPANY)" || (echo "COMPANY=... required" && exit 2)
-	@test -n "$(YEAR)"    || (echo "YEAR=... required"    && exit 2)
-	@test -n "$(TYPE)"    || (echo "TYPE=... required"    && exit 2)
-	$(RAG) index "$(PDF)" --company "$(COMPANY)" --year $(YEAR) --type $(TYPE) --extractor $(EXTRACTOR)
+	@test -n "$(PDF)" || (echo "PDF=... required" && exit 2)
+	@$(need_company)
+	@$(need_year)
+	$(RAG) index "$(PDF)" -c "$(COMPANY)" -y $(YEAR) -e $(EXTRACTOR) $(META)
 
 ask:
-	@test -n "$(Q)"       || (echo 'Q="..." required'     && exit 2)
-	@test -n "$(COMPANY)" || (echo "COMPANY=... required" && exit 2)
-	@test -n "$(YEAR)"    || (echo "YEAR=... required"    && exit 2)
-	$(RAG) ask "$(Q)" --company "$(COMPANY)" --year $(YEAR) $(if $(TYPE),--type $(TYPE)) --top-k $(TOP_K)
+	@test -n "$(Q)" || (echo 'Q="..." required' && exit 2)
+	@$(need_company)
+	$(RAG) ask "$(Q)" -c "$(COMPANY)" $(year_filter) $(FILTER) -k $(TOP_K)
 
 suite:
-	@test -n "$(NAME)"    || (echo 'NAME=annual|sustainability required' && exit 2)
-	@test -n "$(COMPANY)" || (echo "COMPANY=... required" && exit 2)
-	@test -n "$(YEAR)"    || (echo "YEAR=... required"    && exit 2)
-	$(RAG) suite $(NAME) --company "$(COMPANY)" --year $(YEAR) $(if $(TYPE),--type $(TYPE)) --top-k $(TOP_K)
-
-# ---------- evaluation ----------
+	@$(need_company)
+	$(RAG) suite $(NAME) -c "$(COMPANY)" $(year_filter) $(FILTER) -k $(TOP_K)
 
 eval:
-	@test -n "$(COMPANY)" || (echo "COMPANY=... required" && exit 2)
-	@test -n "$(YEAR)"    || (echo "YEAR=... required"    && exit 2)
+	@$(need_company)
+	@$(need_year)
 	$(UV) run pytest experiments/ -v --company $(COMPANY) --year $(YEAR)
 
 eval-retrieval:
-	@test -n "$(COMPANY)" || (echo "COMPANY=... required" && exit 2)
-	@test -n "$(YEAR)"    || (echo "YEAR=... required"    && exit 2)
+	@$(need_company)
+	@$(need_year)
 	$(UV) run pytest experiments/test_retrieval.py -v --company $(COMPANY) --year $(YEAR)
 
 eval-synthesis:
-	@test -n "$(COMPANY)" || (echo "COMPANY=... required" && exit 2)
-	@test -n "$(YEAR)"    || (echo "YEAR=... required"    && exit 2)
+	@$(need_company)
+	@$(need_year)
 	$(UV) run pytest experiments/test_synthesis.py -v --company $(COMPANY) --year $(YEAR)
 
 eval-vlm:
 	$(UV) run pytest experiments/test_vlm.py -v
 
 eval-fast:
-	@test -n "$(COMPANY)" || (echo "COMPANY=... required" && exit 2)
-	@test -n "$(YEAR)"    || (echo "YEAR=... required"    && exit 2)
-	$(UV) run pytest experiments/test_retrieval.py::test_retrieval_page_precision -v --company $(COMPANY) --year $(YEAR)
+	@$(need_company)
+	@$(need_year)
+	$(UV) run pytest experiments/test_retrieval.py::test_retrieval_surfaces_value_on_recorded_pages -v --company $(COMPANY) --year $(YEAR) $(if $(EXTRACTOR),--extractor $(EXTRACTOR))
+
+stage0:
+	@$(need_company)
+	@$(need_year)
+	@$(need_pdfs)
+	$(UV) run python experiments/stage0_parse_recall.py --company "$(COMPANY)" --year $(YEAR) $(corpus_args) --out-dir $(RESULTS)
+
+stage1:
+	@$(need_company)
+	@$(need_year)
+	@$(need_pdfs)
+	$(UV) run python experiments/stage1_vlm_recall.py --company "$(COMPANY)" --year $(YEAR) $(corpus_args) $(if $(VLM_MODEL),--vlm-model $(VLM_MODEL)) --out-dir $(RESULTS)
+
+stage2:
+	@$(need_company)
+	@$(need_year)
+	@test -f $(RESULTS)/stage0_$(EXTRACTOR).json || (echo "run 'make stage0' first: $(RESULTS)/stage0_$(EXTRACTOR).json missing" && exit 2)
+	$(UV) run python experiments/stage2_retrieval_recall.py --company "$(COMPANY)" --year $(YEAR) --extractor $(EXTRACTOR) --stage0 $(RESULTS)/stage0_$(EXTRACTOR).json $(if $(wildcard $(RESULTS)/stage1_$(EXTRACTOR).json),--stage1 $(RESULTS)/stage1_$(EXTRACTOR).json) --out-dir $(RESULTS)
+
+stage3:
+	@$(need_company)
+	@$(need_year)
+	$(UV) run python experiments/score_suite.py --company "$(COMPANY)" --year $(YEAR) --extractor $(EXTRACTOR) $(if $(LIMIT),--limit $(LIMIT)) --out $(RESULTS)/stage3_$(EXTRACTOR).json
+
+bench:
+	$(UV) run python experiments/funnel_report.py --dir $(RESULTS)

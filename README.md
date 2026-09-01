@@ -1,76 +1,90 @@
 # peerdex
 
-Production-grade RAG over peer company reports. Hierarchical retrieval, cited answers, local-first, GCS-ready.
+Agentic RAG over corporate reports. Ask a question, get the value or nothing.
 
 ## Quick start
 
 ```bash
 uv sync
-export OPENAI_API_KEY=sk-...
-uv run rag index path/to/report.pdf --company ACME --year 2025 --type annual_report
-uv run rag ask "Total revenue?" --company ACME --year 2025
-uv run rag suite annual --company ACME --year 2025
+cp .env.example .env          # then set OPENAI_API_KEY
+uv run rag index report.pdf -c globex -y 2025
+uv run rag ask "Gross global Scope 1 emissions" -c globex -f year=2025
 ```
 
-## Stack
+## How it works
 
-Extractor (parse) → Chunker + VLM (pictures) → OpenAI embeddings → LanceDB → topic router + hybrid retrieval (dense + BM25 RRF) + LLM rerank → cited synthesis.
+```
+PDF → extractor → chunker (+VLM on figures) → embeddings → LanceDB
+                                                              ↓
+question → plan → retrieve (dense + BM25 RRF, HyDE, LLM rerank) → extract → reflect → answer
+```
 
-## Config
+The agent retries with a reformulated query when the first pass misses, bounded at two attempts. Every attempt is recorded on the answer.
 
-| File | Purpose |
-|------|---------|
-| `config/config.yaml` | All settings with `${ENV_VAR:-default}` expansion |
-| `.env` | API keys, model names, URIs |
-| `config/suites.yaml` | Q&A suites with ground truth |
+**A quantitative question returns the value alone, or an empty string.** Never a hedge, never prose around a number. A qualitative question returns prose. Both carry citations.
+
+## Documents
+
+Every document is indexed as-is — no report-type taxonomy, no routing. `company` is the only fixed filter. Everything else is an attribute:
+
+```bash
+uv run rag index report.pdf -c globex -y 2025 -m benchmark=true
+uv run rag ask "Total water consumption" -c globex -f benchmark=true
+```
+
+Attributes also load automatically from a `<pdf-stem>.meta.json` sidecar. `doc_id` is `sha256(company + extractor + file bytes)`, so re-indexing a file replaces it and extractor variants coexist for comparison.
 
 ## Extractors
 
-Pluggable via `--extractor`:
+`-e docling` (default), `liteparse`, `kreuzberg`, `odl`. All emit the same `ExtractedDoc`, so they are swappable and comparable.
+
+`odl` additionally needs Java 11+ and `opendataloader-pdf-hybrid --port 5002` running.
+
+Measured on 11 Globex PDFs. Parse recall does not separate them — every extractor reaches every value the oracle holds — so the choice is made on latency.
+
+| extractor | text extracted | parse errors | oracle values reached | parse time |
+| --- | --- | --- | --- | --- |
+| `kreuzberg` | 2,674,607 chars | 0 | 28/28 (26 exact, 2 scale) | 7 s |
+| `liteparse` | 1,917,146 chars | 0 | 28/28 (26 exact, 2 scale) | 177 s |
+| `docling` | 1,613,930 chars | 0 | 28/28 (26 exact, 2 scale) | 1,121 s |
+| `odl` | N/A | N/A | N/A | not run — huge latency (~59 min) |
+
+Oracle-reached counts are provisional while the ground-truth values are under review.
 
 ```bash
-uv run rag index report.pdf --company acme --year 2025 --type annual_report --extractor liteparse
+uv run python experiments/test_extractor_benchmark.py ~/Documents/globex
 ```
-
-| Extractor | Backend | Tables | Images | Requirements |
-|-----------|---------|--------|--------|--------------|
-| **docling** (default) | Python ML models (layout + table structure) | Structured | Yes | `docling` pip package |
-| **odl** | OpenDataLoader Java + docling hybrid | Structured | No | `opendataloader-pdf[hybrid]`, Java 11+, hybrid server running |
-| **liteparse** | PDF.js spatial text + Tesseract OCR | Flat text | No | Node.js 18+, `npm i -g @llamaindex/liteparse` |
-
-### Extraction benchmark: Neste 2025 Annual Report (241 pages, 15 MB)
-
-Apple M3 Pro, macOS. Run: `uv run python experiments/test_extractor_benchmark.py ~/Documents/neste_2025.pdf`
-
-| Metric | liteparse | docling | odl (hybrid) |
-|--------|-----------|---------|--------------|
-| **Extraction time** | **35s** | 5m 29s | 7m 05s |
-| Blocks | 242 | 2,913 | 3,604 |
-| Tables | 0 | 269 | 258 |
-| Images | 0 | 32 | 0 |
-| Nodes indexed | 240 | — | 973 |
-
-### Suite results: Neste 2025 Annual Report
-
-`rag suite annual --company neste --year 2025`
-
-| Question | Expected | liteparse | docling | odl |
-|----------|----------|-----------|---------|-----|
-| Total number of employees? | 3,743 | PASS | PASS | PASS |
-| Total Revenue for 2025? | 17,065 (p.173) | FAIL | PASS | PASS |
-| Total hours worked? | Correct refusal | PASS | PASS | PASS |
-| **Result** | | **2/3** | **3/3** | **3/3** |
-
-Liteparse lacks table structure — revenue on p.173 is inside a financial table that becomes flat text, causing retrieval miss. Docling and ODL both parse tables structurally and retrieve correctly.
 
 ## Evaluation
 
+Two independent measures, both required.
+
+**Accuracy against ground truth.** `config/suites.yaml` holds the `ref_bench01` suite — 89 questions with Globex values for 2023–2025 taken from a production extraction.
+
 ```bash
-pytest experiments/ -v                    # all
-pytest experiments/test_retrieval.py -v   # retrieval only
-pytest experiments/test_synthesis.py -v   # synthesis only
+uv run python experiments/score_suite.py --company globex --year 2025 --extractor liteparse
 ```
 
-## Storage
+Outcomes are `match`, `mismatch`, `scale_mismatch`, `missed`, `abstained`, and `extra`. `extra` means we found a value the ground truth marks unavailable — a candidate improvement for review, not an error.
 
-Local: `./lancedb/` + `./cache/`. Prod: swap to `gs://...` via config.
+**Answer quality.** deepeval judges faithfulness, answer relevancy and contextual precision/recall. This is what separates "retrieval missed the passage" from "the model had it and fumbled", and it is the only scorer for the qualitative questions.
+
+```bash
+make eval COMPANY=globex YEAR=2025
+```
+
+## Config
+
+`config/config.yaml` with `${ENV_VAR:-default}` expansion; secrets in `.env`.
+
+Storage is `./lancedb/` + `./cache/` locally, `gs://...` in prod.
+
+## Development
+
+```bash
+make test      # unit tests, warnings fatal
+make lint      # ruff check + format --check
+make format
+```
+
+Conventions live in `AGENTS.md`.
