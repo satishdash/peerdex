@@ -87,4 +87,4 @@ make lint      # ruff check + format --check
 make format
 ```
 
-Conventions live in `AGENTS.md`.
+Conventions live in `AGENTS.md`. Deferred work is in `docs/roadmap.md`.
