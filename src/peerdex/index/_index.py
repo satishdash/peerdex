@@ -5,6 +5,7 @@ doc_id is content-addressed, so re-indexing a file first deletes its prior
 LanceDB rows and replaces them cleanly.
 """
 
+import math
 import re
 from collections.abc import Mapping
 from functools import lru_cache
@@ -98,6 +99,55 @@ def ensure_fts_index() -> None:
         return
     tbl.create_fts_index("text", replace=True)
     log.info("[index] built FTS index over text")
+
+
+def _vector_index_shape(rows: int, dim: int) -> tuple[int, int]:
+    """Partitions and sub-vectors for an IVF_PQ index, derived from the table's size.
+
+    Partitions sit near the square root of the row count, the usual balance between
+    how many centroids must be compared and how much of the table each one holds.
+    Sub-vectors must divide the embedding dimension; 16 dimensions each keeps the
+    quantisation error low enough to matter little at this scale.
+
+    Deriving both from the data is the point: a hardcoded pair tuned on one corpus
+    would be wrong for the next one.
+    """
+    partitions: int = max(1, min(4096, int(math.sqrt(rows))))
+    return partitions, max(1, dim // 16)
+
+
+def _vector_dim(tbl: Any) -> int:
+    """Width of the embedding column, read from the table rather than assumed."""
+    field: Any = tbl.schema.field("vector")
+    return int(field.type.list_size)
+
+
+def ensure_vector_index() -> None:
+    """Build the approximate-nearest-neighbour index unless the table already has one.
+
+    Without it every dense query scans every row. That is milliseconds on a few
+    thousand rows and seconds on a few million, so the index is what makes dense
+    retrieval possible at production size rather than merely faster.
+    """
+    tbl = table()
+    if any(str(getattr(i, "index_type", "")).startswith("IVF") for i in tbl.list_indices()):
+        return
+    rows: int = tbl.count_rows()
+    partitions: int
+    sub_vectors: int
+    partitions, sub_vectors = _vector_index_shape(rows, _vector_dim(tbl))
+    tbl.create_index(
+        metric="cosine",
+        num_partitions=partitions,
+        num_sub_vectors=sub_vectors,
+        vector_column_name="vector",
+        index_type="IVF_PQ",
+        replace=True,
+    )
+    log.info(
+        f"[index] built IVF_PQ over vector rows={rows} "
+        f"partitions={partitions} sub_vectors={sub_vectors}"
+    )
 
 
 def _literal(value: Scalar) -> str:
@@ -215,6 +265,7 @@ async def index_doc(
     storage.docstore.add_documents(parent_nodes + child_nodes, allow_update=True)
     storage.persist(persist_dir=_persist_dir())
     ensure_fts_index()
+    ensure_vector_index()
 
     log.info(f"[index] persisted {len(child_nodes)} nodes (doc_id={did})")
     return {

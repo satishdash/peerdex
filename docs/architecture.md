@@ -13,8 +13,8 @@ and cannot drift out of date unnoticed.
                 │                   └──────────┘                   │
             cached on                                              │
           bytes+extractor                                          ▼
-                                                        LanceDB rows + FTS index
-                                                        docstore JSON
+                                                LanceDB rows + FTS + vector index
+                                                docstore JSON
  ─────────────────────────────────────────────────────────────────────────────
  ASK  (once per question)
  ┌──────────┐   ┌──────┐   ┌──────────┐   ┌─────────┐   ┌────────┐
@@ -131,8 +131,14 @@ thresholds — because those are logos and rules, not data.
   one row per CHILD chunk:                            parents + children
     id, text, vector, metadata struct                 with relationships
         │
-        └─► FTS index (tantivy inverted index over `text`)
+        ├─► FTS index    (tantivy inverted index over `text`)
+        └─► vector index (IVF_PQ over `vector`)
 ```
+
+Both indexes are built after every ingest and are no-ops if already present.
+The vector index's parameters are **derived from the row count** — partitions
+near √rows, sub-vectors dividing the embedding width — because a pair tuned on
+one corpus is wrong for the next.
 
 `metadata` is a struct, so filters push down into the database as SQL:
 `metadata.company = '…' AND metadata.year = 2025`.
@@ -142,18 +148,38 @@ the read path.
 
 ## Stage 5 — retrieve: narrow, then rank
 
+Two modes, selected by `retrieval.query_type`. One database call either way.
+
 ```
-  question ──► LanceDB
-               .search(question, query_type="fts")     ← inverted index
-               .where("metadata.company = … AND …")    ← SQL narrowing
-               .limit(final_top_k)
-                    │
-                    ▼
-             scored passages, each with its page
+  FULL TEXT (query_type: fts)          DENSE (query_type: vector)  ← default
+  ──────────────────────────           ──────────────────────────
+  question, verbatim                   question ──► embedding model
+        │                                                │  (one API call)
+        ▼                                                ▼
+  .search(text, "fts")                 .search(vector, "vector")
+  .where(<SQL on metadata>)            .where(<SQL on metadata>)
+  .limit(final_top_k)                  .refine_factor(5)   ← see below
+        │                              .limit(final_top_k)
+        │                                     │
+        └──────────────┬──────────────────────┘
+                       ▼
+         scored passages, each with its page
 ```
 
-One step, **zero LLM calls**. `company` is always filtered; any other attribute
-is optional, AND across keys and OR within a key.
+`company` is always filtered; any other attribute is optional, AND across keys
+and OR within a key.
+
+**Measured on the metric suite, k=25, three runs each with zero spread:**
+
+| mode | hits |
+| --- | --- |
+| full text | 17/28 |
+| dense, exact (no index) | 19/28 |
+| dense, IVF_PQ index, no refinement | 17/28 |
+| **dense, IVF_PQ index, `refine_factor=5`** | **19/28** |
+
+Dense finds everything full text finds, plus two more. The index without
+refinement gives that gain straight back — see the first boulder below.
 
 ## Stage 6 — extract: passages become one figure
 
@@ -242,14 +268,54 @@ then 13 on identical input.
 
 The order for adding anything back is in `backlog.md`.
 
-## One known inconsistency
+## Rocks and boulders
 
-**Embeddings are computed but never queried.** Ingest embeds every child chunk
-and stores the vector, while retrieval uses full-text search only.
+The things that will bite someone reading this code for the first time. Every
+one was found the hard way.
 
-It is not merely unused, it is a loss: dense vector search measures **19/28**
-against full-text's **17/28** on the reference questions, over three runs with
-zero spread, and misses nothing full-text finds. The table also carries no
-vector index, so that measurement was brute-force exact search. Switching
-retrieval to vector, and indexing the column, is the next retrieval step in
-`backlog.md`.
+**Full text and dense return opposite polarities.** Full text gives `_score`
+(higher is better); dense gives `_distance` (lower is better). Reading only
+`_score` scores every dense hit zero and leaves citations in arbitrary order —
+silently, with no error. Both are normalised in one place, `_relevance`.
+
+**Product quantisation silently costs recall.** IVF_PQ compresses each 1536-dim
+vector from 6,144 bytes to 96 — 64× — which is what makes a large corpus fit,
+and it loses the fine distinctions. Measured: 19/28 exact, 17/28 indexed.
+`refine_factor` re-ranks the top candidates against the *uncompressed* vectors
+and restores 19/28. **Never run IVF_PQ without it.**
+
+**`nprobes` was not the knob.** 20 versus 68 partitions probed made no
+difference, which proves the loss was compression and not partition pruning. It
+becomes the recall knob at a size where partitions number in the thousands.
+
+**The table holds children only** — zero parents in 4,739 rows. Coarse-to-fine
+hierarchical search is therefore impossible without changing what is stored.
+
+**`create_index` takes the column from a positional argument named `metric`.**
+The modern-looking `create_index(config=FTS(), vector_column_name="text")` fails
+with `Field path 'l2' not found`, which explains nothing. Pass `metric=`,
+`vector_column_name=` and `index_type=` explicitly.
+
+**The parse cache must be pickle, not JSON.** `PictureBlock` carries a live PIL
+image that the figure stage consumes; a JSON round-trip loses it.
+
+**Cache IO resolves through one seam at call time.** `from peerdex.shared import
+cache` then `cache.fs_and_root()`, never `from …cache import fs_and_root` — a
+direct import binds at import time, defeats patching, and will write to the real
+filesystem from inside a test.
+
+**Stage 0's recall number over-reports.** It compares with 1% tolerance *and*
+power-of-ten freedom across every block of every document, so it once counted a
+goodwill figure as waste tonnage. Read it as "a number of that magnitude exists
+somewhere", not "the value is findable".
+
+**An extraction with no row label is a refusal.** Otherwise a plausible
+neighbouring figure gets returned — one energy number was answered for coal,
+natural gas and nuclear alike in a document that breaks out none of them.
+
+**Scoring must read the unit.** `58,739` reported in `$m` looks a millionfold
+wrong against `58739000000` until the unit is consulted.
+
+**Repeat runs of an LLM stage are not independent.** Completions are cached, so
+running stage 3 three times returns identical answers by construction. The
+three-run rule earns its keep on uncached comparisons like the retrieval modes.

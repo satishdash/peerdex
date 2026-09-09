@@ -61,6 +61,8 @@ part of it gets redone.
 | Verify the 32 unverified claims | answers produced where the reference is empty. Deliberately out of step 3's scope, so "better than the reference" stays **unproven** and must not be reported as a result |
 | Reference values look derived | water reference is a *withdrawal* figure against a consumption question; the total-GHG reference is a sum printed nowhere; two energy references have repeating decimals, so they are conversions of something else. The ruler itself is suspect |
 | Hierarchical vector search | blocked: the table holds 0 parents of 4,739 rows. Parents live only in the docstore |
+| **Compare the index algorithms — HNSW first** | only `IVF_PQ` has been measured (19/28 with `refine_factor=5`, 17/28 without). `IVF_HNSW_FLAT`, `IVF_HNSW_SQ`, `IVF_HNSW_PQ`, plus `IVF_FLAT`, `IVF_SQ` and `IVF_RQ`, are untried. Report **recall, query latency and storage together** on the same 28 questions against the exact brute-force baseline of 19/28 — an option that wins one axis by losing another is rejected. If HNSW is better on all three, adopt it |
+| Extractor must cite the period column | it cites the row label but not the period, so it read `Baseline 2015` where `2025` was asked. Same fix shape as the label. **This is what the vector default is blocked on** |
 
 ## Debt
 

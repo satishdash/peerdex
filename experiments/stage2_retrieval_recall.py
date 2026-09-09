@@ -29,7 +29,7 @@ from peerdex.funnel import (
     RetrievedPassage,
     StageDocument,
 )
-from peerdex.retrieve import LexicalRetriever
+from peerdex.retrieve import PassageRetriever
 from peerdex.shared.settings import get_settings
 
 
@@ -53,7 +53,7 @@ class Stage2Runner:
     async def run(self) -> dict[str, Any]:
         """Classify all oracle questions and write stage2_<extractor>.json."""
         oracle: list[OracleValue] = load_oracle(self._company, self._year)
-        retriever = LexicalRetriever(
+        retriever = PassageRetriever(
             company=self._company,
             attributes={"year": self._year, "extractor": self._extractor},
         )
@@ -75,7 +75,7 @@ class Stage2Runner:
         )
         return summary
 
-    async def _outcome(self, retriever: LexicalRetriever, value: OracleValue) -> RetrievalOutcome:
+    async def _outcome(self, retriever: PassageRetriever, value: OracleValue) -> RetrievalOutcome:
         result = await retriever.retrieve(value.question)
         passages: list[RetrievedPassage] = [
             RetrievedPassage(

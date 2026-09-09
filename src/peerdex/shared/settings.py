@@ -4,7 +4,7 @@ import os
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from dotenv import load_dotenv
@@ -87,7 +87,11 @@ class ResilienceCfg(BaseModel):
 
 
 class RetrievalCfg(BaseModel):
+    """How passages are found. ``query_type`` selects the search mode."""
+
     final_top_k: int = 25
+    query_type: Literal["fts", "vector"] = "fts"
+    vector_refine_factor: int = 5
 
 
 class LoggingCfg(BaseModel):

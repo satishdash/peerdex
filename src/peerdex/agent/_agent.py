@@ -358,11 +358,11 @@ async def answer(
 ) -> AgentAnswer:
     """One-shot agentic answer over the persisted index for one company."""
     from peerdex.agent._extractor import LLMQuantitativeExtractor
-    from peerdex.retrieve import LexicalRetriever
+    from peerdex.retrieve import PassageRetriever
     from peerdex.synthesize import synthesize
 
     workflow: AgentRAGWorkflow = AgentRAGWorkflow(
-        retriever=LexicalRetriever(company=company, attributes=filters),
+        retriever=PassageRetriever(company=company, attributes=filters),
         extractor=LLMQuantitativeExtractor(),
         synthesizer=synthesize,
     )

@@ -4,7 +4,7 @@ from typing import Any
 
 from pytest_mock import MockerFixture
 
-from peerdex.retrieve import LexicalRetriever
+from peerdex.retrieve import PassageRetriever
 
 ROW: dict[str, Any] = {
     "id": "d1:c7",
@@ -31,7 +31,9 @@ async def test_given_filters_when_retrieving_then_predicate_is_pushed_to_lancedb
     """Narrowing in the database is the point; filtering in Python would reload the corpus."""
     tbl, search = _table(mocker, [ROW])
 
-    result = await LexicalRetriever(company="Acme", attributes={"year": 2025}).retrieve("scope 1")
+    result = await PassageRetriever(
+        company="Acme", attributes={"year": 2025}, query_type="fts"
+    ).retrieve("scope 1")
 
     tbl.search.assert_called_once_with("scope 1", query_type="fts")
     search.where.assert_called_once_with("metadata.company = 'acme' AND metadata.year = 2025")
@@ -45,7 +47,7 @@ async def test_given_a_row_when_retrieving_then_id_page_and_score_survive(
     """A passage must stay traceable to its chunk and page, and keep its rank."""
     _table(mocker, [ROW])
 
-    result = await LexicalRetriever(company="acme").retrieve("scope 1")
+    result = await PassageRetriever(company="acme", query_type="fts").retrieve("scope 1")
     node = result.nodes[0]
 
     assert node.node.node_id == "d1:c7"
@@ -58,7 +60,9 @@ async def test_given_no_matches_when_retrieving_then_it_refuses(mocker: MockerFi
     """Nothing found must be a refusal the caller can see, not an empty answer."""
     _table(mocker, [])
 
-    result = await LexicalRetriever(company="acme").retrieve("nothing matches this")
+    result = await PassageRetriever(company="acme", query_type="fts").retrieve(
+        "nothing matches this"
+    )
 
     assert result.nodes == []
     assert result.refused is True

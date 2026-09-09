@@ -1,5 +1,5 @@
-"""Lexical retrieval: BM25 over the filtered docstore. The agent adds the reasoning."""
+"""Retrieval: one filtered LanceDB search, full-text or dense. The agent reasons."""
 
-from peerdex.retrieve._retriever import LexicalRetriever, RetrievalResult, retrieve
+from peerdex.retrieve._retriever import PassageRetriever, RetrievalResult, retrieve
 
-__all__ = ["LexicalRetriever", "RetrievalResult", "retrieve"]
+__all__ = ["PassageRetriever", "RetrievalResult", "retrieve"]

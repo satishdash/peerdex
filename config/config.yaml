@@ -45,6 +45,8 @@ resilience:
 
 retrieval:
   final_top_k: 25
+  query_type: ${PEERDEX_QUERY_TYPE:-vector}
+  vector_refine_factor: 5
 
 logging:
   level: ${PEERDEX_LOG_LEVEL:-INFO}
