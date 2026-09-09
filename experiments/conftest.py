@@ -5,7 +5,7 @@ once per question and cached in-process so multiple metrics don't
 re-invoke retrieval+synthesis.
 
 Company and year are passed via pytest CLI:
-    pytest experiments/ --company suncor --year 2025
+    pytest experiments/ --company acme --year 2025
 """
 
 import json
@@ -25,11 +25,11 @@ from peerdex.shared.settings import CONFIG_PATH
 from peerdex.synthesize import synthesize as do_synth
 
 SUITES_PATH = CONFIG_PATH.parent / "suites.yaml"
-SUITE_NAME = "ref_bench01"
+SUITE_NAME = "default"
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
-    parser.addoption("--company", required=True, help="Company to evaluate (e.g. suncor)")
+    parser.addoption("--company", required=True, help="Company identifier to evaluate")
     parser.addoption("--year", required=True, type=int, help="Report year (e.g. 2025)")
     parser.addoption("--extractor", default=None, help="Restrict retrieval to one extractor")
     parser.addoption("--stage0", default=None, help="Path to a stage0_<extractor>.json")
@@ -119,7 +119,7 @@ def load_qa_cases(
 
 
 def valued_cases(*, company: str, year: int) -> list[EvalCase]:
-    """The scoreable population: quantitative ref_bench01 questions carrying a value."""
+    """The scoreable population: quantitative default questions carrying a value."""
     return [
         case
         for case in load_qa_cases(company=company, year=year, require_answer=True)

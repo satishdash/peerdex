@@ -5,6 +5,7 @@ section into parent nodes and split into child nodes, each linked to its
 parent. Pictures are described asynchronously by the VLM first.
 """
 
+import re
 from collections.abc import Iterable
 
 import tiktoken
@@ -19,7 +20,7 @@ from peerdex.parse import (
     PictureBlock,
     TableBlock,
 )
-from peerdex.shared.cache import fs_and_root, join_path
+from peerdex.shared.cache import chunk_debug_dir, chunk_debug_path, fs_and_root
 from peerdex.shared.clients import openai_async
 from peerdex.shared.ids import node_id
 from peerdex.shared.logging import get_logger
@@ -75,6 +76,77 @@ def _render_table(b: TableBlock) -> str:
 def _cell(s: str) -> str:
     s = (s or "").replace("\n", " ").replace("|", "\\|").strip()
     return s or " "
+
+
+_POSITIONAL_HEADER: re.Pattern[str] = re.compile(r"^(?:col)?\d+$")
+
+
+def _semantic_header(b: TableBlock) -> tuple[list[str], list[list[str]]]:
+    """Column names plus the rows beneath them.
+
+    Extractors that number their columns carry the real names in the first row, so a
+    row group headed by ``0 | 1 | 2`` would never say which year a value belongs to.
+    """
+    headers: list[str] = list(b.headers or [])
+    if headers and not all(_POSITIONAL_HEADER.match(h.strip()) for h in headers):
+        return headers, list(b.rows)
+    if b.rows:
+        return list(b.rows[0]), list(b.rows[1:])
+    return headers, list(b.rows)
+
+
+def _row_line(cells: list[str], width: int) -> str:
+    padded: list[str] = [*cells, *[""] * (width - len(cells))][:width]
+    return "| " + " | ".join(_cell(c) for c in padded) + " |"
+
+
+class _RowPacker:
+    """Greedy packer grouping rendered rows so each group fits a token budget."""
+
+    def __init__(self, preamble: str, budget: int) -> None:
+        self._preamble: str = preamble
+        self._budget: int = budget
+        self._buffer: list[str] = []
+        self._used: int = 0
+        self._groups: list[str] = []
+
+    def add(self, line: str) -> None:
+        """Take one rendered row, closing the open group first when it would overflow."""
+        cost: int = _tok(line)
+        if self._buffer and self._used + cost > self._budget:
+            self._close()
+        self._buffer.append(line)
+        self._used += cost
+
+    def groups(self) -> list[str]:
+        """Close the open group and return every group rendered with its preamble."""
+        self._close()
+        return self._groups
+
+    def _close(self) -> None:
+        if not self._buffer:
+            return
+        self._groups.append(self._preamble + "\n".join(self._buffer))
+        self._buffer = []
+        self._used = 0
+
+
+def _table_chunk_texts(b: TableBlock, max_tokens: int) -> list[str]:
+    """Render one table as row groups that each repeat the caption and column names.
+
+    A whole dense table in one chunk gives a single embedding for every metric it holds,
+    which matches no individual metric well enough to retrieve.
+    """
+    headers, rows = _semantic_header(b)
+    if not rows:
+        return [_render_table(b)]
+    width: int = max(len(headers), max(len(r) for r in rows))
+    caption: str = f"**{b.caption.strip()}**\n\n" if b.caption.strip() else ""
+    preamble: str = f"{caption}{_row_line(headers, width)}\n{_row_line(['---'] * width, width)}\n"
+    packer = _RowPacker(preamble, max(max_tokens - _tok(preamble), 1))
+    for row in rows:
+        packer.add(_row_line(row, width))
+    return packer.groups()
 
 
 def _render_picture_chunk_text(page_no: int, heading_path: list[str], result: dict) -> str:
@@ -141,7 +213,7 @@ def _make_node(
     is_parent: bool = False,
 ) -> TextNode:
     metadata: dict[str, Scalar] = {
-        "doc_id": doc_id,
+        "source_doc_id": doc_id,
         "company": doc_meta.company,
         "year": doc_meta.year,
         "page_no": page_no,
@@ -250,12 +322,10 @@ async def _describe_pictures(
 
 def _write_debug_md(doc_id: str, nodes: Iterable[TextNode]) -> None:
     fs, _root = fs_and_root()
-    debug_dir = join_path("cache", "chunks")
-    if fs.exists(debug_dir):
+    path = chunk_debug_path(doc_id)
+    if fs.exists(path):
         return
-    fs.makedirs(debug_dir, exist_ok=True)
-
-    path = join_path(debug_dir, f"{doc_id}.md")
+    fs.makedirs(chunk_debug_dir(), exist_ok=True)
     parts: list[str] = []
     for n in nodes:
         h = f"# {n.metadata.get('heading_path', 'root')}"
@@ -266,6 +336,21 @@ def _write_debug_md(doc_id: str, nodes: Iterable[TextNode]) -> None:
 
     with fs.open(path, "w") as f:
         f.write("\n---\n\n".join(parts))
+
+
+def _link(parent: TextNode, children: list[TextNode]) -> None:
+    """Wire a parent to its children in both directions.
+
+    ``AutoMergingRetriever`` counts ``child_nodes`` to decide whether enough siblings
+    came back to be worth merging; with that list absent it reads every parent as
+    having a single child and merges on the first hit, so the threshold never bites.
+    """
+    parent.relationships[NodeRelationship.CHILD] = [
+        RelatedNodeInfo(node_id=child.node_id) for child in children
+    ]
+    parent_ref = RelatedNodeInfo(node_id=parent.node_id)
+    for child in children:
+        child.relationships[NodeRelationship.PARENT] = parent_ref
 
 
 class HierarchicalChunker:
@@ -297,19 +382,17 @@ class HierarchicalChunker:
         child_nodes: list[TextNode] = []
         pic_iter = iter(pic_nodes)
         child_idx = 0
+        parent_idx = 0
 
         for sec_idx, (heading_path, page_no, blocks) in enumerate(sections):
-            parent_id = node_id(doc_id, sec_idx * 10_000)
-
             table_blocks = [b for b in blocks if isinstance(b, TableBlock)]
             prose_blocks = [b for b in blocks if isinstance(b, (ParagraphBlock, ListBlock))]
             has_pictures = any(isinstance(b, PictureBlock) for b in blocks)
 
             for tb in table_blocks:
-                table_text = _render_table(tb)
                 p_node = _make_node(
-                    parent_id,
-                    table_text,
+                    node_id(doc_id, parent_idx, "p"),
+                    _render_table(tb),
                     heading_path,
                     page_no,
                     doc_id,
@@ -318,21 +401,26 @@ class HierarchicalChunker:
                     is_table=True,
                     is_parent=True,
                 )
-                c_node = _make_node(
-                    node_id(doc_id, child_idx),
-                    table_text,
-                    heading_path,
-                    page_no,
-                    doc_id,
-                    metadata,
-                    child_idx,
-                    is_table=True,
-                    is_parent=False,
-                )
-                c_node.relationships[NodeRelationship.PARENT] = RelatedNodeInfo(node_id=parent_id)
+                parent_idx += 1
+                kids: list[TextNode] = []
+                for group_text in _table_chunk_texts(tb, child_tokens):
+                    kids.append(
+                        _make_node(
+                            node_id(doc_id, child_idx, "c"),
+                            group_text,
+                            heading_path,
+                            page_no,
+                            doc_id,
+                            metadata,
+                            child_idx,
+                            is_table=True,
+                            is_parent=False,
+                        )
+                    )
+                    child_idx += 1
+                _link(p_node, kids)
                 parent_nodes.append(p_node)
-                child_nodes.append(c_node)
-                child_idx += 1
+                child_nodes.extend(kids)
 
             if prose_blocks:
                 section_texts = _build_paragraph_chunk_text(
@@ -340,8 +428,9 @@ class HierarchicalChunker:
                     prose_blocks,
                     parent_tokens,
                 )
-                for part_idx, sec_text in enumerate(section_texts):
-                    p_id = node_id(doc_id, sec_idx * 10_000 + part_idx + 1)
+                for sec_text in section_texts:
+                    p_id = node_id(doc_id, parent_idx, "p")
+                    parent_idx += 1
                     p_node = _make_node(
                         p_id,
                         sec_text,
@@ -353,38 +442,40 @@ class HierarchicalChunker:
                         is_table=False,
                         is_parent=True,
                     )
-                    parent_nodes.append(p_node)
 
                     splitter = SentenceSplitter(
                         chunk_size=child_tokens,
                         chunk_overlap=32,
                         tokenizer=_enc().encode,
                     )
+                    prose_kids: list[TextNode] = []
                     for ct in splitter.split_text(sec_text):
                         if not ct.strip():
                             continue
-                        c_node = _make_node(
-                            node_id(doc_id, child_idx),
-                            ct,
-                            heading_path,
-                            page_no,
-                            doc_id,
-                            metadata,
-                            child_idx,
-                            is_table=False,
-                            is_parent=False,
+                        prose_kids.append(
+                            _make_node(
+                                node_id(doc_id, child_idx, "c"),
+                                ct,
+                                heading_path,
+                                page_no,
+                                doc_id,
+                                metadata,
+                                child_idx,
+                                is_table=False,
+                                is_parent=False,
+                            )
                         )
-                        c_node.relationships[NodeRelationship.PARENT] = RelatedNodeInfo(
-                            node_id=p_id
-                        )
-                        child_nodes.append(c_node)
                         child_idx += 1
+                    _link(p_node, prose_kids)
+                    parent_nodes.append(p_node)
+                    child_nodes.extend(prose_kids)
 
             if has_pictures:
                 for pn in pic_iter:
                     if not pn.text.strip():
                         continue
-                    p_id = node_id(doc_id, sec_idx * 10_000 + 5_000)
+                    p_id = node_id(doc_id, parent_idx, "p")
+                    parent_idx += 1
                     p_node = _make_node(
                         p_id,
                         pn.text,
@@ -397,7 +488,7 @@ class HierarchicalChunker:
                         is_parent=True,
                     )
                     c_node = _make_node(
-                        node_id(doc_id, child_idx),
+                        node_id(doc_id, child_idx, "c"),
                         pn.text,
                         heading_path,
                         page_no,
@@ -407,7 +498,7 @@ class HierarchicalChunker:
                         is_figure=True,
                         is_parent=False,
                     )
-                    c_node.relationships[NodeRelationship.PARENT] = RelatedNodeInfo(node_id=p_id)
+                    _link(p_node, [c_node])
                     parent_nodes.append(p_node)
                     child_nodes.append(c_node)
                     child_idx += 1

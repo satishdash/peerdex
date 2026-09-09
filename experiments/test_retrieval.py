@@ -1,11 +1,11 @@
-"""Retrieval evaluation over ref_bench01: value recall, page precision and LLM-judged context.
+"""Retrieval evaluation over the default suite: value recall, page precision and LLM-judged context.
 
 Parameterised over the quantitative questions that carry a value for the requested
-company/year (28 for globex 2025). Page precision uses the pages stage 0
+company/year (28 for acme 2025). Page precision uses the pages stage 0
 recorded when ``--stage0`` points at its JSON; without it only value recall is judged.
 
 Run:
-    pytest experiments/test_retrieval.py -v --company globex --year 2025 \
+    pytest experiments/test_retrieval.py -v --company acme --year 2025 \
         --extractor liteparse --stage0 results/funnel/stage0_liteparse.json
 """
 

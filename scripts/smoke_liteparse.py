@@ -1,5 +1,6 @@
-"""Smoke run: liteparse extractor against a real document, with gate accounting."""
+"""Smoke run: liteparse extractor against PEERDEX_SMOKE_PDF, with gate accounting."""
 
+import os
 from collections import Counter
 from pathlib import Path
 
@@ -7,7 +8,7 @@ from liteparse import LiteParse
 
 from peerdex.parse._liteparse import LiteParseExtractor, PictureGate
 
-PDF = Path("~/Documents/globex/f797953b.pdf")
+PDF = Path(os.environ["PEERDEX_SMOKE_PDF"]).expanduser()
 
 
 def main() -> None:

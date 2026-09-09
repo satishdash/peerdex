@@ -1,9 +1,9 @@
 """Benchmark extractors across one or many PDFs.
 
 Usage:
-    uv run python experiments/test_extractor_benchmark.py ~/Documents/globex
+    uv run python experiments/test_extractor_benchmark.py ~/Documents/reports
     uv run python experiments/test_extractor_benchmark.py a.pdf b.pdf --extractors liteparse
-    uv run python experiments/test_extractor_benchmark.py ~/Documents/globex --out bench.json
+    uv run python experiments/test_extractor_benchmark.py ~/Documents/reports --out bench.json
 
 Results are appended to the JSON file after every document so a long run
 survives an interrupt. Failures are recorded, never fatal.

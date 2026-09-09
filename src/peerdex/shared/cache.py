@@ -96,6 +96,16 @@ def join_path(*parts: str) -> str:
     return root.rstrip("/") + "/" + "/".join(p.strip("/") for p in parts)
 
 
+def chunk_debug_dir() -> str:
+    """Directory holding the per-document chunk dumps; the root already is the cache."""
+    return join_path("chunks")
+
+
+def chunk_debug_path(doc_id: str) -> str:
+    """Where one document's chunk dump lives."""
+    return f"{chunk_debug_dir()}/{doc_id}.md"
+
+
 # ---------- public API (delegates to active backend) ----------
 
 

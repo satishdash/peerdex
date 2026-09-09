@@ -9,11 +9,11 @@ from peerdex.shared.prompts import PROMPTS
 
 EXPECTED_EXCLUDED: list[str] = [
     "bucket_key",
-    "doc_id",
     "extractor",
     "idx",
     "is_parent",
     "prompt_version",
+    "source_doc_id",
     "source_uri",
     "url",
 ]
@@ -63,7 +63,7 @@ async def test_given_attributes_when_chunked_then_nodes_carry_merged_metadata() 
     assert len(children) == 2
     table_child: TextNode = children[0]
     assert table_child.metadata == {
-        "doc_id": "d1",
+        "source_doc_id": "d1",
         "company": "acme",
         "year": 2025,
         "page_no": 1,
@@ -99,7 +99,6 @@ async def test_given_no_attributes_when_chunked_then_fixed_keys_only() -> None:
     assert len(children) == 2
     assert sorted(children[0].metadata) == [
         "company",
-        "doc_id",
         "extractor",
         "heading_path",
         "idx",
@@ -108,6 +107,7 @@ async def test_given_no_attributes_when_chunked_then_fixed_keys_only() -> None:
         "is_table",
         "page_no",
         "prompt_version",
+        "source_doc_id",
         "source_uri",
         "year",
     ]

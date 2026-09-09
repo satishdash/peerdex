@@ -13,11 +13,11 @@ from rich.table import Table
 from peerdex.funnel import BlockProjector, OracleValue, SearchableBlock
 from peerdex.parse import ExtractedDoc, PictureBlock, get_extractor
 
-SUITE_NAME: str = "ref_bench01"
+SUITE_NAME: str = "default"
 
 
 def load_oracle(company: str, year: int) -> list[OracleValue]:
-    """The scoreable population: quantitative ref_bench01 questions with a value."""
+    """The scoreable population: quantitative default questions with a value."""
     return [
         OracleValue(case.q, case.expected_answer or "")
         for case in load_qa_cases(company=company, year=year, require_answer=True)

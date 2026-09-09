@@ -22,13 +22,13 @@ SCALAR: ScalarValueParser = ScalarValueParser()
 SCALAR_SET: ScalarSetValueParser = ScalarSetValueParser()
 
 REAL_SIDECAR_PAYLOAD: dict[str, dict[str, Scalar]] = {
-    "Globex PLC/f797953b.pdf": {
+    "Acme PLC/f797953b.pdf": {
         "title": "Sustainability Data Content Index 2025",
         "file_name": "Data-Index-2025.pdf",
         "type": "Sustainability report",
         "year": 2025,
-        "bucket_key": "Globex PLC/f797953b.pdf",
-        "url": "https://www.globex.com/x/Data-Index-2025.pdf",
+        "bucket_key": "Acme PLC/f797953b.pdf",
+        "url": "https://reports.example.com/x/Data-Index-2025.pdf",
     }
 }
 
@@ -43,13 +43,13 @@ def _pdf_with_sidecar(tmp_path: Path, sidecar_text: str | None) -> Path:
 
 def test_given_valid_attributes_when_constructed_then_identity_normalized() -> None:
     meta: DocumentMetadata = DocumentMetadata(
-        company=" Globex ",
+        company=" Acme ",
         year=2025,
         source_uri="/docs/a.pdf",
         extractor="liteparse",
         attributes={"benchmark": True, "title": "T"},
     )
-    assert meta.company == "globex"
+    assert meta.company == "acme"
     assert meta.year == 2025
     assert meta.source_uri == "/docs/a.pdf"
     assert meta.extractor == "liteparse"
@@ -84,8 +84,8 @@ def test_given_real_sidecar_shape_when_loaded_then_inner_scalars_minus_reserved(
         "title": "Sustainability Data Content Index 2025",
         "file_name": "Data-Index-2025.pdf",
         "type": "Sustainability report",
-        "bucket_key": "Globex PLC/f797953b.pdf",
-        "url": "https://www.globex.com/x/Data-Index-2025.pdf",
+        "bucket_key": "Acme PLC/f797953b.pdf",
+        "url": "https://reports.example.com/x/Data-Index-2025.pdf",
     }
 
 
@@ -190,12 +190,12 @@ def test_given_repeated_key_when_parsed_then_rejected(
     [
         pytest.param(
             {"benchmark": True, "year": 2024},
-            {"company": ("globex",), "benchmark": (1,), "year": (2024,)},
+            {"company": ("acme",), "benchmark": (1,), "year": (2024,)},
             id="single-values",
         ),
         pytest.param(
             {"year": [2023, 2024], "benchmark": (True, False)},
-            {"company": ("globex",), "year": (2023, 2024), "benchmark": (1, 0)},
+            {"company": ("acme",), "year": (2023, 2024), "benchmark": (1, 0)},
             id="multi-values",
         ),
     ],
@@ -204,7 +204,7 @@ def test_given_company_and_attributes_when_filter_built_then_pairs_canonical(
     attributes: dict[str, Scalar | list[Scalar] | tuple[Scalar, ...]],
     expected: dict[str, tuple[Scalar, ...]],
 ) -> None:
-    filt: AttributeFilter = AttributeFilter(" Globex ", attributes)
+    filt: AttributeFilter = AttributeFilter(" Acme ", attributes)
     assert filt.pairs == expected
     assert {type(value) for values in filt.pairs.values() for value in values} == {str, int}
 
@@ -212,65 +212,65 @@ def test_given_company_and_attributes_when_filter_built_then_pairs_canonical(
 @pytest.mark.parametrize("values", [[2023, "draft"], []])
 def test_given_unusable_value_set_when_filter_built_then_rejected(values: list[Scalar]) -> None:
     with pytest.raises(ValueError, match="year"):
-        AttributeFilter("globex", {"year": values})
+        AttributeFilter("acme", {"year": values})
 
 
 @pytest.mark.parametrize(
     ("attributes", "metadata", "expected"),
     [
-        pytest.param(None, {"company": "globex", "year": 2023}, True, id="company-only"),
+        pytest.param(None, {"company": "acme", "year": 2023}, True, id="company-only"),
         pytest.param(None, {"company": "other", "year": 2025}, False, id="wrong-company"),
         pytest.param(
             {"year": [2023, 2024]},
-            {"company": "globex", "year": 2024},
+            {"company": "acme", "year": 2024},
             True,
             id="multi-value-member",
         ),
         pytest.param(
             {"year": [2023, 2024]},
-            {"company": "globex", "year": 2025},
+            {"company": "acme", "year": 2025},
             False,
             id="multi-value-non-member",
         ),
         pytest.param(
             {"year": [2023, 2024]},
-            {"company": "globex"},
+            {"company": "acme"},
             False,
             id="multi-value-key-missing",
         ),
         pytest.param(
             {"year": [2023, 2024], "region": "emea"},
-            {"company": "globex", "year": 2023, "region": "emea"},
+            {"company": "acme", "year": 2023, "region": "emea"},
             True,
             id="and-across-keys-or-within-key",
         ),
         pytest.param(
             {"year": [2023, 2024], "region": "emea"},
-            {"company": "globex", "year": 2023, "region": "apac"},
+            {"company": "acme", "year": 2023, "region": "apac"},
             False,
             id="and-across-keys-one-key-fails",
         ),
         pytest.param(
             {"benchmark": [True, False]},
-            {"company": "globex", "benchmark": 0},
+            {"company": "acme", "benchmark": 0},
             True,
             id="bool-set-matches-canonical-node-value",
         ),
         pytest.param(
             {"benchmark": True},
-            {"company": "globex", "benchmark": 1},
+            {"company": "acme", "benchmark": 1},
             True,
             id="bool-filter-matches-canonical-node-value",
         ),
         pytest.param(
             {"benchmark": True},
-            {"company": "globex", "benchmark": 0},
+            {"company": "acme", "benchmark": 0},
             False,
             id="attribute-differs",
         ),
         pytest.param(
             {"benchmark": True},
-            {"company": "globex"},
+            {"company": "acme"},
             False,
             id="attribute-missing",
         ),
@@ -281,7 +281,7 @@ def test_given_node_metadata_when_matched_then_predicate_decides(
     metadata: dict[str, Scalar],
     expected: bool,
 ) -> None:
-    assert AttributeFilter("globex", attributes).matches(metadata) is expected
+    assert AttributeFilter("acme", attributes).matches(metadata) is expected
 
 
 def test_given_node_metadata_when_classified_then_opaque_keys_excluded() -> None:

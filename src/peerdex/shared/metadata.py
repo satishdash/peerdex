@@ -17,6 +17,7 @@ type Scalars = Scalar | Sequence[Scalar]
 RESERVED_KEYS: frozenset[str] = frozenset(
     {
         "doc_id",
+        "source_doc_id",
         "company",
         "year",
         "source_uri",
@@ -32,7 +33,17 @@ RESERVED_KEYS: frozenset[str] = frozenset(
 )
 
 OPAQUE_KEYS: frozenset[str] = frozenset(
-    {"doc_id", "idx", "source_uri", "prompt_version", "is_parent", "extractor", "bucket_key", "url"}
+    {
+        "doc_id",
+        "source_doc_id",
+        "idx",
+        "source_uri",
+        "prompt_version",
+        "is_parent",
+        "extractor",
+        "bucket_key",
+        "url",
+    }
 )
 
 _SIDECAR_SUFFIX: str = ".meta.json"

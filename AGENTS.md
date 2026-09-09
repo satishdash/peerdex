@@ -33,7 +33,7 @@ experiments/   slow evaluation and benchmark harnesses, hit real APIs
 | `make install` | `uv sync` |
 | `uv run rag index <pdf> -c <company> -y <year> [-e <extractor>] [-m k=v]` | Ingest one PDF |
 | `uv run rag ask "<q>" -c <company> [-f k=v]` | One question |
-| `uv run rag suite ref_bench01 -c <company> [-f k=v]` | Whole question suite |
+| `uv run rag suite default -c <company> [-f k=v]` | Whole question suite |
 | `make test` | Unit tests, warnings fatal |
 | `make lint` / `make format` | ruff check + format |
 | `make eval COMPANY=<c> YEAR=<y>` | deepeval judge suite (spends API credit) |
@@ -42,7 +42,7 @@ experiments/   slow evaluation and benchmark harnesses, hit real APIs
 
 ## Evaluation
 
-`config/suites.yaml` holds the `ref_bench01` suite: 89 questions from the Core metric `REF BENCH01`, with Globex ground truth for 2023–2025 taken from the production extraction. A mismatch against it is a real miss, not a judgement call. `expected_answer: ""` means the document genuinely does not state the value, so returning any number there is a hallucination.
+`config/suites.yaml` holds the `default` suite: 89 questions with reference ground truth for 2023–2025 taken from a production extraction. A mismatch against it is a real miss, not a judgement call. `expected_answer: ""` means the document genuinely does not state the value, so returning any number there is a hallucination.
 
 ## Engineering guardrails
 

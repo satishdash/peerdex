@@ -1,10 +1,10 @@
-"""Answer evaluation over ref_bench01 through the agent: oracle match plus LLM-judged quality.
+"""Answer evaluation over the default suite through the agent: oracle match plus LLM-judged quality.
 
 Parameterised over the quantitative questions that carry a value for the requested
 company/year. A refusal on a valued question is a failure, never a skip.
 
 Run:
-    pytest experiments/test_synthesis.py -v --company globex --year 2025 --extractor liteparse
+    pytest experiments/test_synthesis.py -v --company acme --year 2025 --extractor liteparse
 """
 
 import pytest

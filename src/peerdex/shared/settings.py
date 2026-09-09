@@ -93,7 +93,7 @@ class RetrievalCfg(BaseModel):
     top_k_dense: int = 20
     top_k_bm25: int = 20
     rerank_top_k: int = 8
-    final_top_k: int = 5
+    final_top_k: int = 25
 
 
 class LoggingCfg(BaseModel):

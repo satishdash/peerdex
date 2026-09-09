@@ -6,7 +6,7 @@ per-image cache keys on (image bytes, model, prompt_version), so sweeping
 ``--vlm-model`` is additive. Costs OpenAI calls for uncached pictures.
 
 Usage:
-    uv run python experiments/stage1_vlm_recall.py --company globex --year 2025 \
+    uv run python experiments/stage1_vlm_recall.py --company acme --year 2025 \
         --vlm-model gpt-5.4-mini [--pdf-dir /abs/dir] [--pdf /abs/file.pdf ...] \
         [--extractors liteparse docling] [--out-dir results/funnel]
 """

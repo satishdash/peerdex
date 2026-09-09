@@ -7,8 +7,8 @@ Agentic RAG over corporate reports. Ask a question, get the value or nothing.
 ```bash
 uv sync
 cp .env.example .env          # then set OPENAI_API_KEY
-uv run rag index report.pdf -c globex -y 2025
-uv run rag ask "Gross global Scope 1 emissions" -c globex -f year=2025
+uv run rag index report.pdf -c acme -y 2025
+uv run rag ask "Gross global Scope 1 emissions" -c acme -f year=2025
 ```
 
 ## How it works
@@ -28,8 +28,8 @@ The agent retries with a reformulated query when the first pass misses, bounded 
 Every document is indexed as-is — no report-type taxonomy, no routing. `company` is the only fixed filter. Everything else is an attribute:
 
 ```bash
-uv run rag index report.pdf -c globex -y 2025 -m benchmark=true
-uv run rag ask "Total water consumption" -c globex -f benchmark=true
+uv run rag index report.pdf -c acme -y 2025 -m benchmark=true
+uv run rag ask "Total water consumption" -c acme -f benchmark=true
 ```
 
 Attributes also load automatically from a `<pdf-stem>.meta.json` sidecar. `doc_id` is `sha256(company + extractor + file bytes)`, so re-indexing a file replaces it and extractor variants coexist for comparison.
@@ -40,7 +40,7 @@ Attributes also load automatically from a `<pdf-stem>.meta.json` sidecar. `doc_i
 
 `odl` additionally needs Java 11+ and `opendataloader-pdf-hybrid --port 5002` running.
 
-Measured on 11 Globex PDFs. Parse recall does not separate them — every extractor reaches every value the oracle holds — so the choice is made on latency.
+Measured on 11 PDFs from a single issuer. Parse recall does not separate them — every extractor reaches every value the oracle holds — so the choice is made on latency.
 
 | extractor | text extracted | parse errors | oracle values reached | parse time |
 | --- | --- | --- | --- | --- |
@@ -52,17 +52,17 @@ Measured on 11 Globex PDFs. Parse recall does not separate them — every extrac
 Oracle-reached counts are provisional while the ground-truth values are under review.
 
 ```bash
-uv run python experiments/test_extractor_benchmark.py ~/Documents/globex
+uv run python experiments/test_extractor_benchmark.py ~/Documents/reports
 ```
 
 ## Evaluation
 
 Two independent measures, both required.
 
-**Accuracy against ground truth.** `config/suites.yaml` holds the `ref_bench01` suite — 89 questions with Globex values for 2023–2025 taken from a production extraction.
+**Accuracy against ground truth.** `config/suites.yaml` holds the `default` suite — 89 questions with reference values for 2023–2025 taken from a production extraction.
 
 ```bash
-uv run python experiments/score_suite.py --company globex --year 2025 --extractor liteparse
+uv run python experiments/score_suite.py --company acme --year 2025 --extractor liteparse
 ```
 
 Outcomes are `match`, `mismatch`, `scale_mismatch`, `missed`, `abstained`, and `extra`. `extra` means we found a value the ground truth marks unavailable — a candidate improvement for review, not an error.
@@ -70,7 +70,7 @@ Outcomes are `match`, `mismatch`, `scale_mismatch`, `missed`, `abstained`, and `
 **Answer quality.** deepeval judges faithfulness, answer relevancy and contextual precision/recall. This is what separates "retrieval missed the passage" from "the model had it and fumbled", and it is the only scorer for the qualitative questions.
 
 ```bash
-make eval COMPANY=globex YEAR=2025
+make eval COMPANY=acme YEAR=2025
 ```
 
 ## Config

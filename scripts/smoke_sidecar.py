@@ -1,5 +1,6 @@
-"""Smoke run: sidecar attribute adapter against the real Globex meta file."""
+"""Smoke run: sidecar attribute adapter against the PDF named by PEERDEX_SMOKE_PDF."""
 
+import os
 from pathlib import Path
 
 from peerdex.shared.metadata import (
@@ -10,7 +11,7 @@ from peerdex.shared.metadata import (
     SidecarAttributeSource,
 )
 
-PDF = Path("~/Documents/globex/f797953b.pdf")
+PDF = Path(os.environ["PEERDEX_SMOKE_PDF"]).expanduser()
 
 
 def main() -> None:
@@ -21,12 +22,12 @@ def main() -> None:
         [SidecarAttributeSource(), ExplicitAttributeSource({"benchmark": True})]
     ).load(PDF)
     meta = DocumentMetadata(
-        company="Globex", year=2025, source_uri=str(PDF), attributes=composed
+        company="Acme", year=2025, source_uri=str(PDF), attributes=composed
     )
     print("document attributes:", meta.attributes)
     print("company:", meta.company, "year:", meta.year)
 
-    filt = AttributeFilter("globex", {"benchmark": True})
+    filt = AttributeFilter("acme", {"benchmark": True})
     node_metadata = {"company": meta.company, "year": meta.year, **meta.attributes}
     print("filter pairs:", filt.pairs)
     print("filter matches indexed node:", filt.matches(node_metadata))

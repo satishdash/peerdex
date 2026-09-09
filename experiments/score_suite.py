@@ -1,7 +1,7 @@
-"""Answer-accuracy scorer: runs the agent over ref_bench01 and scores every answer.
+"""Answer-accuracy scorer: runs the agent over default and scores every answer.
 
 Usage:
-    uv run python experiments/score_suite.py --company globex --year 2025 \
+    uv run python experiments/score_suite.py --company acme --year 2025 \
         --extractor liteparse [--limit N] [--out scores.json]
 
 Quantitative questions go through ``peerdex.agent`` with the suite's ``kind``
@@ -27,7 +27,7 @@ from peerdex.agent import AgentAnswer, QuestionKind
 from peerdex.agent import answer as agent_answer
 from peerdex.scoring import AnswerScorer, Comparison
 
-SUITE_NAME: str = "ref_bench01"
+SUITE_NAME: str = "default"
 _CATEGORIES: tuple[str, ...] = (
     "match",
     "scale_mismatch",

@@ -14,6 +14,7 @@ __pycache__/
 cache/
 lancedb/
 results/
+.reindex-backup/
 bench_extractors.json
 .deepeval/
 .deepeval_cache/

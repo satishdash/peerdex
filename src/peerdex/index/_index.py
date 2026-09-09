@@ -5,18 +5,19 @@ doc_id is content-addressed, so re-indexing a file first deletes its prior
 LanceDB rows and replaces them cleanly.
 """
 
+import re
 from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
-import lancedb
 from llama_index.core import StorageContext, VectorStoreIndex
 from llama_index.core.storage.docstore import SimpleDocumentStore
 from llama_index.core.storage.index_store import SimpleIndexStore
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.vector_stores.lancedb import LanceDBVectorStore
 
+import lancedb
 from peerdex.chunk import HierarchicalChunker
 from peerdex.parse import get_extractor
 from peerdex.shared.ids import doc_id as make_doc_id
@@ -31,6 +32,8 @@ from peerdex.shared.metadata import (
 from peerdex.shared.settings import get_settings
 
 log = get_logger("index")
+
+_SAFE_KEY: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _persist_dir() -> str:
@@ -76,6 +79,62 @@ def storage_context() -> StorageContext:
     )
 
 
+def table() -> Any:
+    """The LanceDB table itself, for full-text search and row predicates."""
+    s = get_settings()
+    db = lancedb.connect(s.storage.lancedb_uri)
+    return db.open_table(s.storage.table_name)
+
+
+def ensure_fts_index() -> None:
+    """Build the full-text index over the chunk text unless the table already has one.
+
+    LanceDB keeps this inverted index (tantivy) beside the rows, so lexical search no
+    longer needs the whole docstore loaded and re-stemmed in memory per process.
+    """
+    tbl = table()
+    if any(getattr(i, "index_type", "") == "FTS" for i in tbl.list_indices()):
+        return
+    tbl.create_fts_index("text", replace=True)
+    log.info("[index] built FTS index over text")
+
+
+def _literal(value: Scalar) -> str:
+    """One filter value as a SQL literal, quoting and escaping strings."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def attribute_predicate(pairs: Mapping[str, tuple[Scalar, ...]]) -> str:
+    """SQL predicate over stored metadata: AND across keys, OR within a key.
+
+    Attribute keys can arrive from a sidecar file, so anything that is not a plain
+    identifier is refused rather than interpolated into the query.
+    """
+    clauses: list[str] = []
+    for key, values in pairs.items():
+        if not _SAFE_KEY.match(key):
+            raise ValueError(f"unsafe attribute key: {key!r}")
+        rendered = ", ".join(_literal(v) for v in values)
+        if len(values) == 1:
+            clauses.append(f"metadata.{key} = {rendered}")
+        else:
+            clauses.append(f"metadata.{key} IN ({rendered})")
+    return " AND ".join(clauses)
+
+
+def doc_predicate(doc_id: str) -> str:
+    """LanceDB predicate matching every row of one indexed document.
+
+    LlamaIndex reserves ``doc_id`` in stored metadata and overwrites it with the node's
+    ``ref_doc_id``, so the document hash is matched under the key the chunker owns.
+    """
+    return f"metadata.source_doc_id = '{doc_id}'"
+
+
 def _delete_existing_doc(doc_id: str) -> None:
     """Remove any prior rows for this doc_id from LanceDB so re-index is clean."""
     s = get_settings()
@@ -83,7 +142,7 @@ def _delete_existing_doc(doc_id: str) -> None:
         db = lancedb.connect(s.storage.lancedb_uri)
         if s.storage.table_name in db.table_names():
             tbl = db.open_table(s.storage.table_name)
-            tbl.delete(f"metadata.doc_id = '{doc_id}'")
+            tbl.delete(doc_predicate(doc_id))
             log.info(f"[index] cleared prior rows for doc_id={doc_id}")
     except Exception as e:
         log.debug(f"[index] delete prior rows skipped: {e}")
@@ -157,6 +216,7 @@ async def index_doc(
     )
     storage.docstore.add_documents(parent_nodes + child_nodes, allow_update=True)
     storage.persist(persist_dir=_persist_dir())
+    ensure_fts_index()
 
     log.info(f"[index] persisted {len(child_nodes)} nodes (doc_id={did})")
     return {

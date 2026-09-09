@@ -5,7 +5,7 @@ here can never be retrieved or answered. Hits record page, block kind and headin
 path, which stage 2 uses as page ground truth.
 
 Usage:
-    uv run python experiments/stage0_parse_recall.py --company globex --year 2025 \
+    uv run python experiments/stage0_parse_recall.py --company acme --year 2025 \
         [--pdf-dir /abs/dir] [--pdf /abs/file.pdf ...] [--extractors liteparse docling] \
         [--out-dir results/funnel]
 """
