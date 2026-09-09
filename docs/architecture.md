@@ -17,7 +17,7 @@ PDF ──► extract ──► chunk ──► describe figures ──► embed
 
 | step | what it produces | notes |
 | --- | --- | --- |
-| extract | `ExtractedDoc` — text, table and picture blocks with page numbers | four interchangeable extractors, chosen with `-e` |
+| extract | `ExtractedDoc` — text, table and picture blocks with page numbers | four interchangeable extractors, chosen with `-e`. **Cached** on the file's bytes plus the extractor's name and version, so a chunker change re-indexes without re-parsing |
 | chunk | a parent per table or section, children per row group or sentence split | every table child repeats the header row and caption, so a row stays answerable alone |
 | describe | a text description per figure, including chart values | cached; searchable like any other text |
 | embed | one vector per child chunk | **see the note below — nothing queries these** |

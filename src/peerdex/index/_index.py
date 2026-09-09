@@ -19,7 +19,8 @@ from llama_index.vector_stores.lancedb import LanceDBVectorStore
 
 import lancedb
 from peerdex.chunk import HierarchicalChunker
-from peerdex.parse import get_extractor
+from peerdex.index._parse_cache import parse_cached
+from peerdex.parse import ExtractedDoc, Extractor, get_extractor
 from peerdex.shared.ids import doc_id as make_doc_id
 from peerdex.shared.logging import get_logger
 from peerdex.shared.metadata import (
@@ -183,11 +184,8 @@ async def index_doc(
     """Extract -> chunk -> embed+store. Idempotent per source file and extractor."""
     pdf_abs: str = str(_resolve(pdf_path))
 
-    extractor_inst = get_extractor(extractor)
-    if hasattr(extractor_inst, "extract_async"):
-        ed = await extractor_inst.extract_async(pdf_abs)
-    else:
-        ed = extractor_inst.extract(pdf_abs)
+    extractor_inst: Extractor = get_extractor(extractor)
+    ed: ExtractedDoc = await parse_cached(pdf_abs, extractor_inst)
 
     extractor_name: str = str(ed.source_meta["extractor_name"])
     doc_meta = _document_metadata(Path(pdf_abs), company, year, extractor_name, attributes)

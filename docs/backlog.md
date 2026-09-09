@@ -23,9 +23,11 @@ the agent answered 34 of them, unverified.
 
 ## Agreed plan
 
+Step numbers are stable: a completed step is removed, the rest keep their
+numbers so earlier references stay valid.
+
 | step | work | bucket |
 | --- | --- | --- |
-| 1 | Parse cache — nothing implements the `parse_cached` the docstrings promise, so every run re-parses every PDF | — |
 | 2 | Close the retrieved-but-wrong gap | A (5) |
 | 3 | Verify a sample of the 34 answers found where the reference is empty | — |
 | 4 | Switch retrieval to dense vector search, build a vector index | C (2 of 7) |
@@ -46,7 +48,7 @@ indexed or queried. Naive RRF fusion of the two scored 17 and is not worth it.
 after five fixes and a schema. If step 5's schema turns out to be corpus-shaped,
 part of it gets redone.
 
-## Pool — decide when steps 1–9 are done
+## Pool — decide when the plan above is done
 
 | item | note |
 | --- | --- |
@@ -66,6 +68,7 @@ part of it gets redone.
 | `max_retries` hardcoded | fixed at 2 in the agent; should be config |
 | `scripts/` formatting | two pre-existing `ruff format` failures, outside `make lint`'s scope |
 | Unused embeddings | computed and stored per chunk, never queried. **Step 4 resolves this** |
+| No embedding cache | unlike the parse, embeddings are recomputed on every re-index at API cost |
 | Debloat pass | across the codebase |
 
 ## Done
@@ -78,6 +81,7 @@ part of it gets redone.
 | Nine dead settings | three `retrieval` keys, three `llm` model keys, three `DocumentPrompts` fields — deleted |
 | Docs | stale architecture image replaced with text; roadmap renamed to `prompt-profiles.md`; plan de-duplicated into this file |
 | Corpus dedup | 3 byte-identical pairs removed by MD5; 63MB of stale local artifacts deleted |
+| Step 1 — parse cache | `peerdex.index.parse_cached`, keyed on file bytes plus extractor name and version. Measured cold 39.82s → warm 0.01s on a 34-page document, with blocks, pages, `source_meta` and figure images identical. `index_doc` shrank by three lines |
 
 ## Rules
 

@@ -8,6 +8,7 @@ from peerdex.index._index import (
     load_index,
     table,
 )
+from peerdex.index._parse_cache import parse_cached
 
 __all__ = [
     "attribute_predicate",
@@ -15,5 +16,6 @@ __all__ = [
     "ensure_fts_index",
     "index_doc",
     "load_index",
+    "parse_cached",
     "table",
 ]
