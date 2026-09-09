@@ -27,8 +27,12 @@ _PROMPT: str = (
     "  2. value is the bare number exactly as printed (digits, separators, sign) - "
     "no unit, no words.\n"
     '  3. unit is the unit printed next to the number, or "".\n'
-    "  4. Never guess, never compute, never combine figures.\n\n"
-    'Return STRICT JSON: {{"value": "...", "unit": "..."}}'
+    "  4. label is the row or line label printed beside that number, copied exactly as "
+    "printed.\n"
+    "  5. If you cannot name that label, the passages do not state the figure asked for: "
+    'return value "" and label "".\n'
+    "  6. Never guess, never compute, never combine figures.\n\n"
+    'Return STRICT JSON: {{"value": "...", "unit": "...", "label": "..."}}'
 )
 
 
@@ -68,10 +72,14 @@ class LLMQuantitativeExtractor:
     def _parse(cls, content: str) -> Extraction:
         payload: Any = cls._payload(content)
         if not isinstance(payload, dict):
-            return Extraction(value="", unit="")
+            return Extraction(value="", unit="", label="")
+        label: str = str(payload.get("label") or "").strip()
+        if not label:
+            return Extraction(value="", unit="", label="")
         return Extraction(
             value=str(payload.get("value") or "").strip(),
             unit=str(payload.get("unit") or "").strip(),
+            label=label,
         )
 
     @staticmethod

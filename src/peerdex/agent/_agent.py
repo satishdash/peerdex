@@ -46,10 +46,16 @@ class Attempt:
 
 @dataclass(frozen=True)
 class Extraction:
-    """A quantitative extraction: bare value string and its unit, both possibly empty."""
+    """A quantitative extraction: the bare value, its unit, and the row label it came from.
+
+    ``label`` is the evidence that a specific printed row was read. Without it a
+    plausible neighbouring figure is indistinguishable from the asked-for one, so
+    an extraction that cannot name its label is treated as a refusal.
+    """
 
     value: str
     unit: str
+    label: str = ""
 
 
 @dataclass(frozen=True)
@@ -231,7 +237,10 @@ class AgentRAGWorkflow:
     async def _answer_quantitative(self, retrieved: RetrievedStep) -> AgentAnswer:
         extraction: Extraction | None = await self._extraction(retrieved)
         if extraction is not None:
-            log.info(f"[agent:extract] value={extraction.value} unit={extraction.unit}")
+            log.info(
+                f"[agent:extract] value={extraction.value} unit={extraction.unit} "
+                f"label={extraction.label!r}"
+            )
             return self._quantitative_answer(retrieved, extraction)
         retry: RetrievedStep | None = await self._reflect(retrieved)
         return (

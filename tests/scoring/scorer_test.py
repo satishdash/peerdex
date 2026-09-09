@@ -95,6 +95,47 @@ def test_given_extra_answer_when_scored_then_actual_number_recorded() -> None:
     assert result.actual_number == 62587.0
 
 
+def test_given_a_unit_naming_the_scale_when_scored_then_it_is_a_match() -> None:
+    """ "58,739" reported in $m IS 58.739 billion; the unit is the missing evidence."""
+    result: Comparison = AnswerScorer().score("58739000000.0", "58,739", unit="$m")
+
+    assert result.category == "match"
+    assert result.scale is None
+
+
+def test_given_a_spelled_out_unit_naming_the_scale_when_scored_then_it_is_a_match() -> None:
+    """Units are written by an LLM, so "USD, million" must work as well as "$m"."""
+    assert AnswerScorer().score("127000000.0", "127", unit="USD, million").category == "match"
+
+
+def test_given_a_unit_naming_a_different_scale_when_scored_then_it_stays_a_scale_mismatch() -> None:
+    """A unit only corroborates the scale it actually names."""
+    result: Comparison = AnswerScorer().score("58739000000.0", "58,739", unit="thousand")
+
+    assert result.category == "scale_mismatch"
+    assert result.scale == 1e6
+
+
+def test_given_a_magnitude_only_after_per_when_scored_then_it_is_not_upgraded() -> None:
+    """In "per million of revenue" the magnitude is the denominator, not the quantity."""
+    result: Comparison = AnswerScorer().score(
+        "1260000.0", "1.26", unit="Tonnes CO2e per million of Total Revenue"
+    )
+
+    assert result.category == "scale_mismatch"
+
+
+def test_given_a_plain_mismatch_when_scored_then_a_unit_cannot_rescue_it() -> None:
+    """3.44 and 22.15 are not a power of ten apart, so no unit makes them agree."""
+    assert AnswerScorer().score("22.15022", "3.44", unit="Million m 3").category == "mismatch"
+
+
+def test_given_no_unit_when_scored_then_the_verdict_is_unchanged() -> None:
+    """The unit is optional; omitting it must score exactly as before."""
+    assert AnswerScorer().score("58739000000.0", "58,739").category == "scale_mismatch"
+    assert AnswerScorer().score("62587.0", "62,587").category == "match"
+
+
 def test_given_wider_tolerance_when_scored_then_match() -> None:
     assert AnswerScorer(rel_tol=0.05).score("100.0", "104").category == "match"
     assert AnswerScorer(rel_tol=0.05).score("100.0", "106").category == "mismatch"

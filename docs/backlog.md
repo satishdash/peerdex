@@ -19,7 +19,8 @@ The 16 that are wrong or missing sit in three buckets:
 Per stage: parse 28/28 (loose — 1% tolerance with power-of-ten freedom across
 the whole corpus, so it over-reports), figures +0, retrieval 17/28, end to end
 12/28. Beyond those 28, the suite holds 58 questions with no reference value;
-the agent answered 34 of them, unverified.
+the agent answered 32 of them, unverified — and at least one is a known
+fabrication, so that bucket is not yet evidence of anything.
 
 ## Agreed plan
 
@@ -28,8 +29,7 @@ numbers so earlier references stay valid.
 
 | step | work | bucket |
 | --- | --- | --- |
-| 2 | Close the retrieved-but-wrong gap | A (5) |
-| 3 | Verify a sample of the 34 answers found where the reference is empty | — |
+| 3 | Verify the 16 disputed questions — the 10 mismatches and 6 misses where we and the reference disagree. Candidates enumerated from the database with label, unit and page; a person adjudicates. The pipeline's own answer must never become the reference | — |
 | 4 | Switch retrieval to dense vector search, build a vector index | C (2 of 7) |
 | 5 | Typed units and scale, plus a derivation step for sums, differences, ratios and unit conversion | B (4) |
 | 6 | Replace `final_top_k` with a score- or coverage-based cutoff | — |
@@ -58,6 +58,8 @@ part of it gets redone.
 | Citation ordering | citations sort by retrieval score, so `[1]` can be a passage the answer did not use |
 | Document dedup by digest | duplicates are structural, not a local accident. Identity from content digest, never filename |
 | Second-corpus reference values | from a local data service on port 8182; needs that stack up and a metric-id mapping |
+| Verify the 32 unverified claims | answers produced where the reference is empty. Deliberately out of step 3's scope, so "better than the reference" stays **unproven** and must not be reported as a result |
+| Reference values look derived | water reference is a *withdrawal* figure against a consumption question; the total-GHG reference is a sum printed nowhere; two energy references have repeating decimals, so they are conversions of something else. The ruler itself is suspect |
 | Hierarchical vector search | blocked: the table holds 0 parents of 4,739 rows. Parents live only in the docstore |
 
 ## Debt
@@ -81,6 +83,7 @@ part of it gets redone.
 | Nine dead settings | three `retrieval` keys, three `llm` model keys, three `DocumentPrompts` fields — deleted |
 | Docs | stale architecture image replaced with text; roadmap renamed to `prompt-profiles.md`; plan de-duplicated into this file |
 | Corpus dedup | 3 byte-identical pairs removed by MD5; 63MB of stale local artifacts deleted |
+| Step 2 — retrieved-but-wrong | Two fixes. The scorer now reads the answer's unit, so a figure reported in `$m` is no longer scored as a millionfold error: strict `match` 11 → 12. The extractor must cite the printed row label and refuses without one, which turned 4 fabricated answers and 2 confidently wrong numbers into abstentions — `mismatch` 12 → 10, `extra` 34 → 32. The label bought honesty, not accuracy. A deterministic term guard was designed and deliberately **not** built: it would have caught roughly one more case while risking refusal of correct answers |
 | Step 1 — parse cache | `peerdex.index.parse_cached`, keyed on file bytes plus extractor name and version. Measured cold 39.82s → warm 0.01s on a 34-page document, with blocks, pages, `source_meta` and figure images identical. `index_doc` shrank by three lines |
 
 ## Rules

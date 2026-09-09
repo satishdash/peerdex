@@ -4,7 +4,7 @@ import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal
+from typing import Final, Literal
 
 type Category = Literal["match", "mismatch", "scale_mismatch", "missed", "abstained", "extra"]
 
@@ -27,6 +27,28 @@ MAGNITUDES: dict[str, float] = {
     "tn": 1e12,
     "trillion": 1e12,
 }
+
+
+_PER: Final[re.Pattern[str]] = re.compile(r"\bper\b")
+_UNIT_WORD: Final[re.Pattern[str]] = re.compile(r"[A-Za-z]+")
+
+
+def _unit_magnitude(unit: str) -> float | None:
+    """The magnitude a unit declares for its own quantity, or None.
+
+    Only the text before ``per`` is read, so "per million of revenue" contributes
+    nothing: there the magnitude belongs to the denominator, and folding it in
+    would corrupt an intensity that already scores correctly.
+
+    A bare "m" is read as million, matching ``NumericParser``. That is ambiguous
+    with metres, which is tolerable because the caller only consults this once
+    the two numbers are already a power of ten apart.
+    """
+    head: str = _PER.split(unit, maxsplit=1)[0].lower()
+    factors: list[float] = [
+        MAGNITUDES[word] for word in _UNIT_WORD.findall(head) if word in MAGNITUDES
+    ]
+    return factors[0] if factors else None
 
 
 @dataclass(frozen=True)
@@ -80,10 +102,26 @@ class AnswerScorer:
         self._scales: tuple[float, ...] = scales
         self._parser: NumericParser = NumericParser()
 
-    def score(self, expected: str, actual: str) -> Comparison:
-        """Categorise the raw model answer against the oracle value string."""
+    def score(self, expected: str, actual: str, unit: str = "") -> Comparison:
+        """Categorise the raw model answer against the oracle value string.
+
+        ``unit`` is what the answer was reported in. The oracle stores a bare
+        number with no unit, so an answer of "58,739" in $m looks a millionfold
+        wrong against 58739000000 until the unit is read. It is only ever used to
+        confirm a scale the two numbers already imply, never to rescale alone.
+        """
         presence: Comparison | None = self._presence(expected, actual)
-        return presence if presence is not None else self._compare(expected, actual)
+        if presence is not None:
+            return presence
+        return self._confirmed(self._compare(expected, actual), unit)
+
+    def _confirmed(self, comparison: Comparison, unit: str) -> Comparison:
+        """A scale mismatch that the unit accounts for is a match, not an error."""
+        if comparison.category != "scale_mismatch":
+            return comparison
+        if _unit_magnitude(unit) != comparison.scale:
+            return comparison
+        return Comparison("match", comparison.expected_number, comparison.actual_number)
 
     def _presence(self, expected: str, actual: str) -> Comparison | None:
         if not expected.strip():

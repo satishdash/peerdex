@@ -44,7 +44,9 @@ async def _answer(case: EvalCase, extractor: str | None) -> AgentAnswer:
 
 async def test_answer_matches_oracle(case: EvalCase, extractor: str | None) -> None:
     result: AgentAnswer = await _answer(case, extractor)
-    comparison: Comparison = AnswerScorer().score(case.expected_answer or "", result.value)
+    comparison: Comparison = AnswerScorer().score(
+        case.expected_answer or "", result.value, result.unit
+    )
     assert comparison.category == "match", (
         f"{comparison.category}: expected {case.expected_answer!r}, got {result.value!r} "
         f"{result.unit} (scale {comparison.scale})"

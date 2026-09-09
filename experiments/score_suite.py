@@ -96,7 +96,7 @@ class SuiteScorer:
             return QuestionRecord(
                 case.q, kind, expected, result.text, "", "unscored", None, None, None
             )
-        comparison: Comparison = self._scorer.score(expected, result.value)
+        comparison: Comparison = self._scorer.score(expected, result.value, result.unit)
         return QuestionRecord(
             case.q,
             kind,
