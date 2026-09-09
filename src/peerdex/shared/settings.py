@@ -64,9 +64,6 @@ class LLMCfg(BaseModel):
     """Text-only LLMs. Vision lives under ``vlm`` below."""
 
     model: str
-    fusion_model: str | None = None
-    hyde_model: str | None = None
-    reranker_model: str | None = None
     synth_model: str | None = None
     judge_model: str | None = None
 
@@ -90,9 +87,6 @@ class ResilienceCfg(BaseModel):
 
 
 class RetrievalCfg(BaseModel):
-    top_k_dense: int = 20
-    top_k_bm25: int = 20
-    rerank_top_k: int = 8
     final_top_k: int = 25
 
 

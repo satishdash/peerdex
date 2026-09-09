@@ -1,71 +1,92 @@
 # Backlog
 
-Every open item in one place. Order will change; nothing here gets dropped
-without a decision. Grouped by what the item is *for*, not by priority.
+The agreed order, then the unordered pool, then debt. Nothing is added here
+until it is decided.
 
-Status: `open` · `blocked` · `parked` (deliberately deferred) · `debt`
+## Where we are
 
-## Accuracy — the path to 90%
+End to end on the first corpus: **12 of 28 correct**. Target 90% = 25 of 28.
+The 16 that are wrong or missing sit in three buckets:
 
-| # | item | status | why it matters |
-| --- | --- | --- | --- |
-| A1 | Parse cache. `parse/_docling.py` and `parse/_odl.py` both promise `peerdex.index.parse_cached`; nothing implements it, so every run re-parses every PDF and re-embeds every chunk | open | enabler — A2, A4 and A5 all need re-indexing |
-| A2 | Directory ingest. `index` takes a single `PDF=`; add `PDF_DIR=`. And `year` is in `RESERVED_KEYS`, so each sidecar's year is dropped and the CLI value wins — a mixed-year directory cannot be ingested correctly | blocked on nothing, needed by A3 | without it the second corpus cannot land |
-| A3 | Second corpus scored. 10 unique PDFs, 2 document types, 3 years, already deduplicated | blocked on A2 | every score so far measures one corpus and one year, so all of them may be overfitted |
-| A4 | Fact layer — typed `(label, value, unit, scale, period, page, provenance)` rows. Design in `fact-layer.md` | open | the largest single win: units, coverage beyond the oracle, and the 36% of misses that are arithmetic |
-| A5 | Derivation rules over facts — sums, differences, ratios, unit conversion | blocked on A4 | four of eleven misses have ground truth that appears nowhere in the document |
-| A6 | Self-contained chunks — fold a bare `## number` plus caption into its table or section | open | a 75-char callout currently outranks the 544-char table that holds the answer |
-| A7 | Replace `final_top_k` with a score- or coverage-based cutoff | open | 25 was chosen so one report's table fell inside the window; that is corpus tuning |
-| A8 | LLM reranker back on top of FTS, measured 3× with `variance.py` | open | worth +4 on the lexical path (10/28 → 14/28). Deliberately last: one LLM call per question, and it previously made scores non-deterministic |
-| A9 | `query_type="hybrid"` and `lancedb.rerankers` — a local cross-encoder may buy A8's +4 with no API call and no non-determinism | open | cheaper and deterministic if it works |
-| A10 | First end-to-end agent baseline (`make stage3`) | open | no number recorded so far measures the agent end to end; stage 2 is retrieval only |
-| A11 | Citation ordering — citations sort by retrieval score, so citation `[1]` can be a passage the answer did not use. Observed: the answer was right and `[1]` was the wrong-metric callout | open | a misleading citation undermines a correct answer |
-| A12 | Document-level deduplication by content digest at ingest | open | measured as marginal for ranking (rank 83 → 65), but the second corpus proved duplicates are structural, not a local accident. Identity must come from the digest, never the filename |
-| A13 | Ground truth for the second corpus from the local data service on port 8182, plus a mapping from its metric identifiers to suite questions | blocked on that stack running | without it the second corpus cannot be scored |
+| bucket | size | problem |
+| --- | --- | --- |
+| A | 5 | retrieval returned the value, the answer was still wrong |
+| B | 4 | the answer is derived — a sum or unit conversion, printed nowhere |
+| C | 7 | retrieval never found a value that is in the document |
 
-## Generic-ness — any PDF, not one report
+16 available against 13 needed. No slack for a step that misses.
 
-| # | item | status | why it matters |
-| --- | --- | --- | --- |
-| G1 | Pluggable prompt profiles — a registry of `DocumentPrompts`, injected rather than imported, with `-p / --prompt-type` on `index`, `ask` and `suite`, and a refusal when a query-time profile does not match any indexed `prompt_version`. Detail in `roadmap.md` | open | the seam that makes an invoice or a bill work as well as a report |
-| G2 | `roadmap.md` is stale — it cites fusion, HyDE and reranker call sites in `retrieve/_retriever.py` that were deleted when retrieval was stripped to one step | debt | the design is still right; the line references are not |
-| G3 | Docling markdown dump per document (`export_to_markdown()`) so chunking strategy is designed from the real structure rather than guesswork | open | requested explicitly as a discussion artifact — produce the file, do not redesign chunking alone |
+Per stage: parse 28/28 (loose — 1% tolerance with power-of-ten freedom across
+the whole corpus, so it over-reports), figures +0, retrieval 17/28, end to end
+12/28. Beyond those 28, the suite holds 58 questions with no reference value;
+the agent answered 34 of them, unverified.
 
-## Speed and scale — 1 → 3 → 5 → 10 → 10k
+## Agreed plan
 
-| # | item | status | why it matters |
-| --- | --- | --- | --- |
-| S1 | Per-stage wall-clock: parse vs chunk vs embed vs docstore-persist, on 3 documents, sequential then 3-way parallel | open | the 1→3 speedup must be a measured number, not a guess |
-| S2 | Move the docstore off a single JSON file. `index_doc` loads and rewrites a 17.7MB `docstore.json` **once per document** | open | O(corpus) work per document — the real wall at 10k docs, and no language rewrite fixes it |
-| S3 | Configurable document-level concurrency, sequential or parallel, with the width itself a knob | open | 10 documents at once, not 10 in a row |
-| S4 | Mojo for profiled hot kernels only — never the docling models | parked | speed may change when and how often docling runs, never what it produces |
+| step | work | bucket |
+| --- | --- | --- |
+| 1 | Parse cache — nothing implements the `parse_cached` the docstrings promise, so every run re-parses every PDF | — |
+| 2 | Close the retrieved-but-wrong gap | A (5) |
+| 3 | Verify a sample of the 34 answers found where the reference is empty | — |
+| 4 | Switch retrieval to dense vector search, build a vector index | C (2 of 7) |
+| 5 | Typed units and scale, plus a derivation step for sums, differences, ratios and unit conversion | B (4) |
+| 6 | Replace `final_top_k` with a score- or coverage-based cutoff | — |
+| 7 | Second corpus — directory ingest, sidecar-driven year, then score it | — |
+| 8 | Speed and scale — docstore off the single JSON, then configurable document concurrency | — |
+| 9 | Agent framework — a real LlamaIndex agent instead of the hand-written retry | — |
+
+Each step ends with a measured number over three runs, never one.
+
+**Evidence behind step 4**: dense vector 19/28 against full-text 17/28, three
+runs, spread 0, and dense misses nothing full-text finds. No build — the vectors
+are already computed and paid for on every ingest, they were simply never
+indexed or queried. Naive RRF fusion of the two scored 17 and is not worth it.
+
+**Note on step 7**: it is the only check against fitting one report, and it sits
+after five fixes and a schema. If step 5's schema turns out to be corpus-shaped,
+part of it gets redone.
+
+## Pool — decide when steps 1–9 are done
+
+| item | note |
+| --- | --- |
+| Reranker | worth +4 on the lexical path historically. Try LanceDB hybrid with a local cross-encoder before any LLM reranker: deterministic, no API call |
+| Prompt profiles | the `DocumentPrompts` registry with `-p / --prompt-type`. Detail in `prompt-profiles.md`. Smaller than designed — 3 consumers remain, not 6 |
+| Chunking: fold callouts | a bare `## number` plus caption is a fragment that outranks real tables. Lowest priority — parsing is not the bottleneck |
+| Citation ordering | citations sort by retrieval score, so `[1]` can be a passage the answer did not use |
+| Document dedup by digest | duplicates are structural, not a local accident. Identity from content digest, never filename |
+| Second-corpus reference values | from a local data service on port 8182; needs that stack up and a metric-id mapping |
+| Hierarchical vector search | blocked: the table holds 0 parents of 4,739 rows. Parents live only in the docstore |
 
 ## Debt
 
-| # | item | status |
-| --- | --- | --- |
-| D1 | `HierarchicalChunker.chunk` complexity ≈30 and `_render_picture_chunk_text` = 16, against a documented limit of 3 | debt |
-| D2 | Agent `max_retries` hardcoded to 2 — should be a config knob | debt |
-| D3 | Two pre-existing `ruff format` failures under `scripts/` | debt |
-| D4 | Debloat pass across the codebase | debt |
-| D5 | Nothing committed since `bb410bc` — the retrieval rewrite, the top-k fix and these docs are all working-tree only | debt |
+| item | note |
+| --- | --- |
+| Chunker complexity | `HierarchicalChunker.chunk` ≈30 and `_render_picture_chunk_text` 16, against a documented limit of 3 |
+| `max_retries` hardcoded | fixed at 2 in the agent; should be config |
+| `scripts/` formatting | two pre-existing `ruff format` failures, outside `make lint`'s scope |
+| Unused embeddings | computed and stored per chunk, never queried. **Step 4 resolves this** |
+| Debloat pass | across the codebase |
 
-## Parked
+## Done
 
-| # | item | note |
-| --- | --- | --- |
-| P1 | VLM extractor via pydantic-ai | deliberate |
-| P2 | Mojo PDF parser research | see S4 |
-| P3 | README rewrite | after the fact layer changes the story |
-| P4 | Rotate the credential in `.git/config`; git history and commit identity carry identifying data | repository is private for now, so deferred by decision |
+| item | outcome |
+| --- | --- |
+| Wrong-answer regression | root-caused to full-text length bias; `final_top_k` 5 → 25 took retrieval 11/28 → 17/28 and the answer is now correct |
+| Three chunker bugs | node-id collision causing an infinite loop, parents with no children, duplicate parent ids |
+| First end-to-end baseline | 12/28 correct, beating the previous path on every bucket |
+| Nine dead settings | three `retrieval` keys, three `llm` model keys, three `DocumentPrompts` fields — deleted |
+| Docs | stale architecture image replaced with text; roadmap renamed to `prompt-profiles.md`; plan de-duplicated into this file |
+| Corpus dedup | 3 byte-identical pairs removed by MD5; 63MB of stale local artifacts deleted |
 
-## Rules that constrain all of the above
+## Rules
 
-- **Never report a single run.** `variance.py` runs stage 2 three times and prints
-  the spread. The old pipeline gave 16, then 12, then 13 on identical input.
-- **A fix must be a property of the system, not of a corpus.** A fixed top-k is
+- Never report a single run of anything involving an LLM. The old pipeline gave
+  16, then 12, then 13 on identical input.
+- A fix must be a property of the system, not of a corpus. A fixed top-k is
   corpus tuning; a score-based cutoff is a system property.
-- **Docling's output is not negotiable.** Speed work may change when, where and
-  how often it runs, never what it produces.
-- **The LanceDB table holds children only** (4,739 rows; parents live in the
-  docstore). Full-text search therefore searches children, where the numbers are.
+- Docling's output is not negotiable. Speed work may change when, where and how
+  often it runs, never what it produces.
+- The LanceDB table holds children only. Full-text and vector search both search
+  children, where the numbers are.
+- No document in this repository exceeds 400 lines.
