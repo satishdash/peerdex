@@ -41,7 +41,10 @@ def _parse_kv[T](pairs: list[str] | None, values: ValueParser[T]) -> dict[str, T
 def index(
     pdf: Annotated[Path, typer.Argument(exists=True, readable=True)],
     company: Annotated[str, typer.Option("--company", "-c")],
-    year: Annotated[int, typer.Option("--year", "-y")],
+    year: Annotated[
+        int | None,
+        typer.Option("--year", "-y", help="reporting year; read from each sidecar when omitted"),
+    ] = None,
     extractor: Annotated[
         str, typer.Option("--extractor", "-e", help="PDF extractor backend (docling, ...)")
     ] = "docling",
@@ -50,15 +53,14 @@ def index(
         typer.Option("--meta", "-m", help="KEY=VALUE attribute, repeatable"),
     ] = None,
 ) -> None:
-    """Extract -> chunk -> embed+store the given PDF."""
-    from peerdex.index import index_doc
+    """Extract -> chunk -> embed+store one PDF, or every PDF in a directory."""
+    from peerdex.index import index_dir, index_doc
 
     attributes: dict[str, Scalar] = _parse_kv(meta, ScalarValueParser())
+    ingest = index_dir if pdf.is_dir() else index_doc
     try:
         result = asyncio.run(
-            index_doc(
-                str(pdf), company=company, year=year, extractor=extractor, attributes=attributes
-            )
+            ingest(pdf, company=company, year=year, extractor=extractor, attributes=attributes)
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc

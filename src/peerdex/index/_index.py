@@ -5,6 +5,7 @@ doc_id is content-addressed, so re-indexing a file first deletes its prior
 LanceDB rows and replaces them cleanly.
 """
 
+import asyncio
 import math
 import re
 from collections.abc import Mapping
@@ -30,6 +31,7 @@ from peerdex.shared.metadata import (
     ExplicitAttributeSource,
     Scalar,
     SidecarAttributeSource,
+    SidecarYearSource,
 )
 from peerdex.shared.settings import get_settings
 
@@ -257,16 +259,32 @@ def _document_metadata(
     )
 
 
+def _resolved_year(pdf_abs: Path, year: int | None) -> int:
+    """The explicit year, else the one the document's sidecar states.
+
+    Explicit input wins, the same rule attributes follow. Neither is an error rather
+    than a default: a wrong year silently corrupts every year-filtered answer for
+    that document, which is worse than refusing to ingest it.
+    """
+    if year is not None:
+        return int(year)
+    stated: int | None = SidecarYearSource().load(pdf_abs)
+    if stated is None:
+        raise ValueError(f"no year given and no sidecar year for {pdf_abs.name}")
+    return stated
+
+
 async def index_doc(
     pdf_path: str | Path,
     *,
     company: str,
-    year: int,
+    year: int | None = None,
     extractor: str | None = None,
     attributes: Mapping[str, Scalar] | None = None,
 ) -> dict[str, Any]:
     """Extract -> chunk -> embed+store. Idempotent per source file and extractor."""
     pdf_abs: str = str(_resolve(pdf_path))
+    year = _resolved_year(Path(pdf_abs), year)
 
     extractor_inst: Extractor = get_extractor(extractor)
     ed: ExtractedDoc = await parse_cached(pdf_abs, extractor_inst)
@@ -310,6 +328,47 @@ async def index_doc(
         "extractor": ed.source_meta.get("extractor_name"),
         "attributes": doc_meta.attributes,
     }
+
+
+def _pdfs_in(dir_path: str | Path) -> tuple[Path, list[Path]]:
+    """The resolved directory and the PDFs directly inside it, sorted."""
+    directory: Path = Path(dir_path).expanduser().resolve()
+    return directory, sorted(p for p in directory.glob("*.pdf") if p.is_file())
+
+
+async def index_dir(
+    dir_path: str | Path,
+    *,
+    company: str,
+    year: int | None = None,
+    extractor: str | None = None,
+    attributes: Mapping[str, Scalar] | None = None,
+) -> list[dict[str, Any]]:
+    """Index every PDF in a directory, each with the year its own sidecar states.
+
+    Sorted so a run is reproducible and a partial one is resumable by eye. Sequential
+    for now: document-level concurrency is its own piece of work, with its own
+    measurement, because the largest document dominates the wall clock.
+    """
+    directory: Path
+    pdfs: list[Path]
+    directory, pdfs = await asyncio.to_thread(_pdfs_in, dir_path)
+    if not pdfs:
+        raise ValueError(f"no PDFs in {directory}")
+
+    log.info(f"[index] ingesting {len(pdfs)} documents from {directory}")
+    results: list[dict[str, Any]] = []
+    for pdf in pdfs:
+        results.append(
+            await index_doc(
+                pdf,
+                company=company,
+                year=_resolved_year(pdf, year),
+                extractor=extractor,
+                attributes=attributes,
+            )
+        )
+    return results
 
 
 def load_index() -> VectorStoreIndex:

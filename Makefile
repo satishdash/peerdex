@@ -47,10 +47,9 @@ format:
 	$(UV) run ruff check --fix src tests && $(UV) run ruff format src tests
 
 index:
-	@test -n "$(PDF)" || (echo "PDF=... required" && exit 2)
+	@$(need_pdfs)
 	@$(need_company)
-	@$(need_year)
-	$(RAG) index "$(PDF)" -c "$(COMPANY)" -y $(YEAR) -e $(EXTRACTOR) $(META)
+	$(RAG) index "$(if $(PDF_DIR),$(PDF_DIR),$(PDF))" -c "$(COMPANY)" $(if $(YEAR),-y $(YEAR)) -e $(EXTRACTOR) $(META)
 
 ask:
 	@test -n "$(Q)" || (echo 'Q="..." required' && exit 2)

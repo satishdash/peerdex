@@ -16,6 +16,7 @@ from peerdex.shared.metadata import (
     ScalarSetValueParser,
     ScalarValueParser,
     SidecarAttributeSource,
+    SidecarYearSource,
 )
 
 SCALAR: ScalarValueParser = ScalarValueParser()
@@ -39,6 +40,40 @@ def _pdf_with_sidecar(tmp_path: Path, sidecar_text: str | None) -> Path:
     if sidecar_text is not None:
         (tmp_path / "f797953b.meta.json").write_text(sidecar_text)
     return pdf
+
+
+def test_given_a_sidecar_with_a_year_when_read_then_it_is_the_documents_year(
+    tmp_path: Path,
+) -> None:
+    """A corpus states each document's reporting year only in its sidecar.
+
+    ``year`` is a reserved key, so it is deliberately dropped from free attributes.
+    Identity needs its own reader or a directory of documents cannot be ingested.
+    """
+    pdf: Path = _pdf_with_sidecar(tmp_path, json.dumps(REAL_SIDECAR_PAYLOAD))
+
+    assert SidecarYearSource().load(pdf) == 2025
+
+
+@pytest.mark.parametrize(
+    "sidecar_text",
+    [
+        None,
+        "{",
+        "{}",
+        '{"Acme PLC/f797953b.pdf": {}}',
+        '{"Acme PLC/f797953b.pdf": {"year": "twenty twenty five"}}',
+        '{"Acme PLC/f797953b.pdf": {"year": true}}',
+        '{"Acme PLC/f797953b.pdf": {"year": null}}',
+    ],
+)
+def test_given_no_usable_year_when_read_then_nothing_is_returned(
+    tmp_path: Path, sidecar_text: str | None
+) -> None:
+    """A year that is absent, unparseable or not a year must never be guessed at."""
+    pdf: Path = _pdf_with_sidecar(tmp_path, sidecar_text)
+
+    assert SidecarYearSource().load(pdf) is None
 
 
 def test_given_valid_attributes_when_constructed_then_identity_normalized() -> None:
