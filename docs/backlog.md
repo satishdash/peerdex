@@ -5,22 +5,30 @@ until it is decided.
 
 ## Where we are
 
-End to end on the first corpus: **12 of 28 correct**. Target 90% = 25 of 28.
-The 16 that are wrong or missing sit in three buckets:
+End to end on the first corpus: **12 of 28 correct**, 11 confidently wrong, 5
+abstained. Per stage: parse 28/28 (loose — 1% tolerance with power-of-ten
+freedom across the whole corpus, so it over-reports), figures +0, retrieval
+19/28, end to end 12/28.
 
-| bucket | size | problem |
+**Target 90% is not reachable against this reference, and step 3 proved why.**
+Every disputed question was audited for whether its reference value appears on a
+related table row. Of 17:
+
+| verdict | size | consequence |
 | --- | --- | --- |
-| A | 5 | retrieval returned the value, the answer was still wrong |
-| B | 4 | the answer is derived — a sum or unit conversion, printed nowhere |
-| C | 7 | retrieval never found a value that is in the document |
+| genuinely ours | 2 | one fixed (Scope 1 column), one open (product recalls) |
+| reference contradicted by the documents | 2 | we answer correctly and are scored wrong |
+| reference printed nowhere | 2 | derived sums, unreachable without a derivation step |
+| reference matches no related row | 11 | unconfirmable; several look like a unit convention the documents never print |
 
-16 available against 13 needed. No slack for a step that misses.
+So the honest ceiling here is roughly **14 of 28** until the reference is
+corrected. Chasing 25/28 against this ruler would be fitting to its errors.
+A corrected reference, or a second corpus, is now the only way to raise the
+number honestly.
 
-Per stage: parse 28/28 (loose — 1% tolerance with power-of-ten freedom across
-the whole corpus, so it over-reports), figures +0, retrieval 17/28, end to end
-12/28. Beyond those 28, the suite holds 58 questions with no reference value;
-the agent answered 32 of them, unverified — and at least one is a known
-fabrication, so that bucket is not yet evidence of anything.
+Beyond those 28, the suite holds 58 questions with no reference value; the agent
+answered 31 of them, unverified — and at least one is a known fabrication, so
+that bucket is not yet evidence of anything.
 
 ## Agreed plan
 
@@ -29,8 +37,6 @@ numbers so earlier references stay valid.
 
 | step | work | bucket |
 | --- | --- | --- |
-| 3 | Verify the 16 disputed questions — the 10 mismatches and 6 misses where we and the reference disagree. Candidates enumerated from the database with label, unit and page; a person adjudicates. The pipeline's own answer must never become the reference | — |
-| 4 | Switch retrieval to dense vector search, build a vector index | C (2 of 7) |
 | 5 | Typed units and scale, plus a derivation step for sums, differences, ratios and unit conversion | B (4) |
 | 6 | Replace `final_top_k` with a score- or coverage-based cutoff | — |
 | 7 | Second corpus — directory ingest, sidecar-driven year, then score it | — |
@@ -39,14 +45,10 @@ numbers so earlier references stay valid.
 
 Each step ends with a measured number over three runs, never one.
 
-**Evidence behind step 4**: dense vector 19/28 against full-text 17/28, three
-runs, spread 0, and dense misses nothing full-text finds. No build — the vectors
-are already computed and paid for on every ingest, they were simply never
-indexed or queried. Naive RRF fusion of the two scored 17 and is not worth it.
-
-**Note on step 7**: it is the only check against fitting one report, and it sits
-after five fixes and a schema. If step 5's schema turns out to be corpus-shaped,
-part of it gets redone.
+**Note on step 7**: it is the only check against fitting one report, and after
+step 3's audit it is also the only way left to raise the accuracy number
+honestly. If step 5's schema turns out to be corpus-shaped, part of it gets
+redone.
 
 ## Pool — decide when the plan above is done
 
@@ -62,7 +64,8 @@ part of it gets redone.
 | Reference values look derived | water reference is a *withdrawal* figure against a consumption question; the total-GHG reference is a sum printed nowhere; two energy references have repeating decimals, so they are conversions of something else. The ruler itself is suspect |
 | Hierarchical vector search | blocked: the table holds 0 parents of 4,739 rows. Parents live only in the docstore |
 | **Compare the index algorithms — HNSW first** | only `IVF_PQ` has been measured (19/28 with `refine_factor=5`, 17/28 without). `IVF_HNSW_FLAT`, `IVF_HNSW_SQ`, `IVF_HNSW_PQ`, plus `IVF_FLAT`, `IVF_SQ` and `IVF_RQ`, are untried. Report **recall, query latency and storage together** on the same 28 questions against the exact brute-force baseline of 19/28 — an option that wins one axis by losing another is rejected. If HNSW is better on all three, adopt it |
-| Extractor must cite the period column | it cites the row label but not the period, so it read `Baseline 2015` where `2025` was asked. Same fix shape as the label. **This is what the vector default is blocked on** |
+| One value answered for several questions | `6,197,690` was returned for three different Scope 3 questions and `1.1%` for three others. The row label is being satisfied by a plausible neighbour — the same class of bug the period column just fixed, one axis over |
+| Correct the reference | step 3 showed 15 of 17 disputed references are contradicted, absent or unconfirmable. Until they are corrected the accuracy number is capped around 14/28 by the ruler. Needs the source that produced them, not our own answers |
 
 ## Debt
 
@@ -71,7 +74,7 @@ part of it gets redone.
 | Chunker complexity | `HierarchicalChunker.chunk` ≈30 and `_render_picture_chunk_text` 16, against a documented limit of 3 |
 | `max_retries` hardcoded | fixed at 2 in the agent; should be config |
 | `scripts/` formatting | two pre-existing `ruff format` failures, outside `make lint`'s scope |
-| Unused embeddings | computed and stored per chunk, never queried. **Step 4 resolves this** |
+| Unused embeddings | resolved by step 4 — they are now the default read path |
 | No embedding cache | unlike the parse, embeddings are recomputed on every re-index at API cost |
 | Debloat pass | across the codebase |
 
@@ -86,6 +89,9 @@ part of it gets redone.
 | Docs | stale architecture image replaced with text; roadmap renamed to `prompt-profiles.md`; plan de-duplicated into this file |
 | Corpus dedup | 3 byte-identical pairs removed by MD5; 63MB of stale local artifacts deleted |
 | Step 2 — retrieved-but-wrong | Two fixes. The scorer now reads the answer's unit, so a figure reported in `$m` is no longer scored as a millionfold error: strict `match` 11 → 12. The extractor must cite the printed row label and refuses without one, which turned 4 fabricated answers and 2 confidently wrong numbers into abstentions — `mismatch` 12 → 10, `extra` 34 → 32. The label bought honesty, not accuracy. A deterministic term guard was designed and deliberately **not** built: it would have caught roughly one more case while risking refusal of correct answers |
+| Step 4 — dense retrieval | `query_type` is a setting, `vector` the default, and the IVF_PQ index's partitions and sub-vectors are derived from the row count rather than tuned to one corpus. Retrieval 17/28 → **19/28**. Full text and dense return opposite score polarities, normalised in one place; `refine_factor=5` is mandatory or product quantisation gives the whole gain back |
+| Step 3 — audit the reference | A probe decides, per disputed question, whether the reference value sits on a table row whose label relates to the question — a fact about the documents, not an opinion. The first version asked only whether the number existed anywhere and so decided nothing: with 1% tolerance and power-of-ten freedom almost everything matches something. Verdict on 17: 2 ours, 2 contradicted, 2 absent, 11 unconfirmable |
+| Extractor cites the period column | The row label alone left one figure per period to choose from, and `298,498` came back from a `Baseline 2015` column under a correct `Scope 1` label. The extractor now names the column and refuses when it states a different period; the asked-for period reaches it from the `year` filter, since the question text rarely contains it. `match` 11 → **12**, `mismatch` 13 → **11**, six fabrications became abstentions. Only columns that state a period are judged — demanding one of every column refused two correct board counts under a `Female` header |
 | Step 1 — parse cache | `peerdex.index.parse_cached`, keyed on file bytes plus extractor name and version. Measured cold 39.82s → warm 0.01s on a 34-page document, with blocks, pages, `source_meta` and figure images identical. `index_doc` shrank by three lines |
 
 ## Rules

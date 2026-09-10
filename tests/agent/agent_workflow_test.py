@@ -39,12 +39,14 @@ class StubExtractor:
     def __init__(self, extractions: list[Extraction]) -> None:
         self._extractions: list[Extraction] = list(extractions)
         self.calls: int = 0
+        self.plans: list[Plan] = []
 
     async def extract(
         self, question: str, plan: Plan, nodes: Sequence[NodeWithScore]
     ) -> Extraction:
         index: int = min(self.calls, len(self._extractions) - 1)
         self.calls += 1
+        self.plans.append(plan)
         return self._extractions[index]
 
 
@@ -271,6 +273,30 @@ def test_given_qualifiers_when_planned_then_extracted() -> None:
     assert plan.period == "2024"
     assert plan.scope == "market-based"
     assert plan.unit == "tCO2e"
+
+
+def test_given_a_question_with_no_period_when_planned_with_one_then_it_is_adopted() -> None:
+    """The asked-for period is usually a filter, not words in the question."""
+    plan: Plan = QuestionPlanner().plan("Gross global Scope 1 emissions", None, period="2025")
+
+    assert plan.period == "2025"
+
+
+def test_given_a_period_in_the_question_when_planned_with_another_then_the_question_wins() -> None:
+    """A period the asker spelled out is more specific than the corpus filter."""
+    plan: Plan = QuestionPlanner().plan("Scope 1 emissions 2023", None, period="2025")
+
+    assert plan.period == "2023"
+
+
+async def test_given_a_period_when_run_then_the_plan_carries_it_to_the_extractor() -> None:
+    """The extractor polices the period column, so the period has to reach it."""
+    retriever: StubRetriever = StubRetriever([StubRetrieval(nodes=[make_node()])])
+    extractor: StubExtractor = StubExtractor([Extraction(value="62,587", unit="", label="a")])
+
+    await make_workflow(retriever, extractor).run("Scope 1 emissions", period="2025")
+
+    assert [plan.period for plan in extractor.plans] == ["2025"]
 
 
 def test_given_headings_and_row_labels_when_reformulated_then_vocabulary_appended() -> None:

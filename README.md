@@ -89,18 +89,26 @@ Scored over the 28 questions that carry a reference value.
 | 0 parse | reference value present in the extracted text | 28/28 ⚠ | 28/28 ⚠ |
 | 1 figures | values reachable *only* via figure descriptions | +0 | +0 |
 | 2 retrieval | value present in the retrieved passages | 17/28 | **19/28** |
-| 3 end to end | final answer matches the reference | **12/28** | 11/28 |
-| — | confidently wrong (`mismatch`) | **10** | 13 |
-| — | abstained where a value exists (`missed`) | 6 | 4 |
-| — | answered where the reference is empty (`extra`) | 32 | 35 |
+| 3 end to end | final answer matches the reference | 12/28 | **12/28** |
+| — | confidently wrong (`mismatch`) | **10** | 11 |
+| — | abstained where a value exists (`missed`) | 6 | **5** |
+| — | answered where the reference is empty (`extra`) | 32 | 31 |
 
-**Dense retrieval finds more and answers worse.** It recovers two questions full
-text cannot reach, yet end-to-end accuracy falls by one and confident errors
-rise by three. The reason is visible in one case: asked for Scope 1 emissions,
-dense search returns the correct table and the extractor reads `298,498` from
-the `Baseline 2015` column instead of `62,587` from `2025`. Recall improved;
-column discipline did not. Higher retrieval recall is not the same as a better
-answer, and this table exists so that distinction cannot be glossed over.
+**Higher retrieval recall did not pay out until the extractor earned it.** Dense
+search reaches two questions full text cannot, but at first it answered *worse*:
+asked for Scope 1 emissions it returned the right table and read `298,498` from
+the `Baseline 2015` column instead of `62,587` from `2025` — a correct row label
+on the wrong period. Requiring the extractor to name the column it read, and
+refusing when that column states a different period, closed the gap:
+
+| dense, end to end | match | mismatch | missed | extra |
+| --- | --- | --- | --- | --- |
+| row label only | 11 | 13 | 4 | 35 |
+| + period column required | **12** | **11** | 5 | 31 |
+
+Six fabrications became abstentions in the same change. The guard judges only
+columns that state a period — an early version demanded one of *every* column
+and refused two correct board-member counts sitting under a `Female` header.
 
 ### Retrieval mode, measured directly
 
@@ -146,10 +154,17 @@ and one year, and none of them is evidence that the system generalises.
 - **The `extra` bucket is not a win.** Those answers are unverified, and at
   least one is a known fabrication — a figure returned for a fuel the documents
   do not break out at all.
-- **The reference itself is suspect in places.** One question asks for total
-  hazardous waste; the documents print `8,388 Tonnes` and the reference says
-  `19.65`. Our answer was marked wrong. `results/gt_review.md` enumerates the
-  candidates for every disputed question.
+- **The reference itself is suspect, and it has now been audited.** Every
+  disputed question was checked against the corpus for whether the reference
+  value appears on a table row whose label relates to the question. Of 17, only
+  **2** were genuinely ours to fix; 2 references are contradicted by the
+  documents, 2 are printed nowhere at all, and 11 match no related row. The
+  clearest case: total hazardous waste, reference `19.65`, which matches only a
+  Scope 3 emissions category (`19,661` tonnes CO₂e) while the documents print
+  `Total hazardous waste | Tonnes | 8,388` — the figure we returned and were
+  scored wrong for. So `12/28` is a floor set partly by the ruler, not the
+  system. Anything above roughly `14/28` cannot be earned without a corrected
+  reference.
 - **Repeat runs of an LLM stage are not independent** — completions are cached,
   so stage 3 run three times returns identical answers by construction.
 

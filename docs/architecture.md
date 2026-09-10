@@ -191,17 +191,34 @@ refinement gives that gain straight back — see the first boulder below.
       one LLM call
             │
             ▼
-   { "value": "62,587", "unit": "Tonnes CO₂e", "label": "Scope 1" }
+   { "value": "62,587", "unit": "Tonnes CO₂e",
+     "label": "Scope 1", "column": "2025" }
             │
             ├─ label empty?  ──► refuse. A number nobody can attribute to a
             │                    printed row is how a neighbouring figure ends
             │                    up being returned as the answer.
+            ├─ column states another period? ──► refuse. See below.
             └─ value not a bare number? ──► refuse
 ```
 
 `label` is the row label copied as printed. Requiring it is what stopped one
 energy figure being returned for coal, natural gas and nuclear alike, in a
 document that breaks out none of them.
+
+`column` is the same evidence along the other axis, and it is needed because a
+correct row label still leaves one figure per period to choose from:
+
+```
+  |        | Baseline 2015 | 2024    | 2025   |   ← asked for 2025
+  | Scope 1|   298,498     | 125,386 | 62,587 |
+              └─ answered this, under the correct label `Scope 1`
+```
+
+The asked-for period arrives from the `year` filter, not from the question —
+`Gross global Scope 1 emissions` contains no year, so reading the period from
+the question text alone left this unfixable. Only a column that *states* a
+period is judged: a `Female` column holding a board count states none, and
+demanding a period of it refused two correct answers when measured.
 
 **A quantitative answer is the value alone or an empty string** — never a hedge,
 never prose around a number. Qualitative questions go to a synthesis step
@@ -312,6 +329,17 @@ somewhere", not "the value is findable".
 **An extraction with no row label is a refusal.** Otherwise a plausible
 neighbouring figure gets returned — one energy number was answered for coal,
 natural gas and nuclear alike in a document that breaks out none of them.
+
+**The asked-for period is a filter, not words in the question.** `plan.period`
+comes from a regex over the question text, and most questions state no year, so
+anything keyed on it silently does nothing. The period is taken from the `year`
+filter, and a filter naming several years yields none — there is then no single
+period to check a column against.
+
+**A guard that judges too much costs accuracy.** Requiring the extracted column
+to match the period looks right until a column is not a period at all: two
+correct board-member counts under a `Female` header were refused. Only columns
+that state a period are judged. Measured both ways — 10 matches against 12.
 
 **Scoring must read the unit.** `58,739` reported in `$m` looks a millionfold
 wrong against `58739000000` until the unit is consulted.

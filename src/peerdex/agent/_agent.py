@@ -22,6 +22,7 @@ log = get_logger("agent")
 type QuestionKind = Literal["quantitative", "qualitative"]
 
 _PERIOD: re.Pattern[str] = re.compile(r"\b(?:19|20)\d{2}\b")
+_PERIOD_FILTER: str = "year"
 _SCOPE: re.Pattern[str] = re.compile(r"\b(market-based|location-based)\b", re.IGNORECASE)
 _TRAILING_UNIT: re.Pattern[str] = re.compile(r"\(([^()\s][^()]{0,14})\)\s*$")
 
@@ -46,16 +47,22 @@ class Attempt:
 
 @dataclass(frozen=True)
 class Extraction:
-    """A quantitative extraction: the bare value, its unit, and the row label it came from.
+    """A quantitative extraction: the bare value, its unit, and where it was printed.
 
     ``label`` is the evidence that a specific printed row was read. Without it a
     plausible neighbouring figure is indistinguishable from the asked-for one, so
     an extraction that cannot name its label is treated as a refusal.
+
+    ``column`` is the same evidence along the other axis. A correct row label still
+    leaves one figure per period to choose from, and `298,498` was once returned
+    from a `Baseline 2015` column for a 2025 question. It is empty for a figure
+    that sits in no column at all, which is the normal case in prose.
     """
 
     value: str
     unit: str
     label: str = ""
+    column: str = ""
 
 
 @dataclass(frozen=True)
@@ -135,12 +142,16 @@ class QuestionPlanner:
         "process",
     )
 
-    def plan(self, question: str, kind: QuestionKind | None = None) -> Plan:
-        """Resolve kind and qualifiers; a caller-supplied kind skips classification."""
+    def plan(self, question: str, kind: QuestionKind | None = None, period: str = "") -> Plan:
+        """Resolve kind and qualifiers; a caller-supplied kind or period fills the gaps.
+
+        A period spelled out in the question is more specific than the one the
+        corpus is filtered to, so it wins.
+        """
         resolved: QuestionKind = kind if kind is not None else self._classify(question)
         return Plan(
             kind=resolved,
-            period=self._first(_PERIOD, question),
+            period=self._first(_PERIOD, question) or period,
             scope=self._first(_SCOPE, question).lower(),
             unit=self._trailing_unit(question),
         )
@@ -212,9 +223,11 @@ class AgentRAGWorkflow:
         self._max_retries: int = max_retries
         self._number_parser: NumericParser = NumericParser()
 
-    async def run(self, question: str, kind: QuestionKind | None = None) -> AgentAnswer:
+    async def run(
+        self, question: str, kind: QuestionKind | None = None, period: str = ""
+    ) -> AgentAnswer:
         """Plan the question, then drive it through the bounded answer loop."""
-        plan: Plan = self._planner.plan(question, kind)
+        plan: Plan = self._planner.plan(question, kind, period)
         log.info(f"[agent:plan] kind={plan.kind} question={question[:80]}")
         retrieved: RetrievedStep = await self._retrieve(question, question, plan, [])
         if plan.kind == "qualitative":
@@ -349,6 +362,18 @@ class AgentRAGWorkflow:
         ]
 
 
+def _filtered_period(filters: Mapping[str, Scalars] | None) -> str:
+    """The single period the corpus is narrowed to, or nothing when it is not a single one.
+
+    The asked-for period is normally a filter rather than words in the question, and
+    the extractor needs it to tell this period's column from its neighbours.
+    """
+    value: Scalars | None = (filters or {}).get(_PERIOD_FILTER)
+    if value is None or isinstance(value, list | tuple | set):
+        return ""
+    return str(value)
+
+
 async def answer(
     question: str,
     *,
@@ -366,4 +391,4 @@ async def answer(
         extractor=LLMQuantitativeExtractor(),
         synthesizer=synthesize,
     )
-    return await workflow.run(question, kind=kind)
+    return await workflow.run(question, kind=kind, period=_filtered_period(filters))
