@@ -126,6 +126,34 @@ back; refinement against the uncompressed vectors restores it. `nprobes` made no
 difference at this size, which is how we know the loss was compression rather
 than partition pruning.
 
+### Vector index type, all seven measured
+
+Same 28 questions, k=25, three runs each, spread 0. `index.vector_type` selects
+it; switching is a rebuild, never a re-embedding or a migration.
+
+| index | recall unrefined | recall refined | latency | bytes/row | at 10k docs |
+| --- | --- | --- | --- | --- | --- |
+| exact, no index | 19/28 | 19/28 | 17.3ms | — | — |
+| **IVF_PQ** (default) | 16/28 | **19/28** | 18.3ms | **0.55KB** | **2.4GB** |
+| IVF_HNSW_PQ | 14/28 | 19/28 | 14.8ms | 0.71KB | 3.1GB |
+| IVF_SQ | 19/28 | 19/28 | 15.9ms | 1.70KB | 7.3GB |
+| IVF_RQ | 19/28 | 19/28 | 16.0ms | 1.73KB | 7.5GB |
+| IVF_HNSW_SQ | 19/28 | 19/28 | 14.3ms | 1.88KB | 8.1GB |
+| IVF_FLAT | 19/28 | 19/28 | 14.1ms | 6.55KB | 28GB |
+| IVF_HNSW_FLAT | 19/28 | 19/28 | 15.9ms | 6.70KB | 29GB |
+
+**HNSW was not adopted.** At every quantisation level its variant costs more
+storage for identical recall and indistinguishable latency. Storage is the only
+axis that separates these at all, and `IVF_PQ` wins it by 3×.
+
+Two caveats. **Latency here proves nothing** — at 4,739 rows the metadata filter
+dominates, not the vector search, so HNSW's sublinear query time cannot show
+itself; it is unadopted on present evidence, not disproven. And **the unrefined
+PQ numbers are pessimistic**: 96 sub-quantisers trained on 4,739 vectors are
+undertrained, so PQ should lose less at production size, not more. `IVF_HNSW_PQ`
+unrefined also measured 18/28 then 14/28 across two builds, because the graph
+construction is randomised.
+
 ### Ingest cost
 
 | measure | value |

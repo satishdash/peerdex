@@ -43,6 +43,9 @@ resilience:
   retry_attempts: 5
   timeout_seconds: 60
 
+index:
+  vector_type: ${PEERDEX_VECTOR_INDEX_TYPE:-IVF_PQ}
+
 retrieval:
   final_top_k: 25
   query_type: ${PEERDEX_QUERY_TYPE:-vector}

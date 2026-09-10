@@ -101,13 +101,19 @@ def ensure_fts_index() -> None:
     log.info("[index] built FTS index over text")
 
 
+_QUANTISED: Final[frozenset[str]] = frozenset(
+    {"IVF_SQ", "IVF_PQ", "IVF_RQ", "IVF_HNSW_SQ", "IVF_HNSW_PQ"}
+)
+
+
 def _vector_index_shape(rows: int, dim: int) -> tuple[int, int]:
-    """Partitions and sub-vectors for an IVF_PQ index, derived from the table's size.
+    """Partitions and sub-vectors for the vector index, derived from the table's size.
 
     Partitions sit near the square root of the row count, the usual balance between
     how many centroids must be compared and how much of the table each one holds.
     Sub-vectors must divide the embedding dimension; 16 dimensions each keeps the
-    quantisation error low enough to matter little at this scale.
+    quantisation error low enough to matter little at this scale. They are passed
+    only to the types that quantise - see ``_QUANTISED``.
 
     Deriving both from the data is the point: a hardcoded pair tuned on one corpus
     would be wrong for the next one.
@@ -122,30 +128,58 @@ def _vector_dim(tbl: Any) -> int:
     return int(field.type.list_size)
 
 
+def _vector_index(tbl: Any) -> Any | None:
+    """The existing index over the vector column, or None.
+
+    Selected by column rather than by type name, so the full-text index over
+    ``text`` is never mistaken for it.
+    """
+    for index in tbl.list_indices():
+        if "vector" in [str(column) for column in getattr(index, "columns", [])]:
+            return index
+    return None
+
+
+def _same_type(reported: str, configured: str) -> bool:
+    """Whether LanceDB's own spelling of an index type is the configured one.
+
+    LanceDB reports ``IvfPq`` where the setting says ``IVF_PQ``. Comparing the two
+    verbatim is always false, which silently rebuilt the index on every ingest.
+    """
+    return reported.replace("_", "").lower() == configured.replace("_", "").lower()
+
+
 def ensure_vector_index() -> None:
     """Build the approximate-nearest-neighbour index unless the table already has one.
 
     Without it every dense query scans every row. That is milliseconds on a few
     thousand rows and seconds on a few million, so the index is what makes dense
     retrieval possible at production size rather than merely faster.
+
+    The type comes from ``index.vector_type``. Changing that setting is enough:
+    an index of a different type is replaced, so switching costs a rebuild and
+    never a re-embedding or a data migration.
     """
     tbl = table()
-    if any(str(getattr(i, "index_type", "")).startswith("IVF") for i in tbl.list_indices()):
+    index_type: str = get_settings().index.vector_type
+    existing: Any | None = _vector_index(tbl)
+    if existing is not None and _same_type(str(existing.index_type), index_type):
         return
     rows: int = tbl.count_rows()
     partitions: int
     sub_vectors: int
     partitions, sub_vectors = _vector_index_shape(rows, _vector_dim(tbl))
+    quantised: dict[str, int] = {"num_sub_vectors": sub_vectors} if index_type in _QUANTISED else {}
     tbl.create_index(
         metric="cosine",
         num_partitions=partitions,
-        num_sub_vectors=sub_vectors,
         vector_column_name="vector",
-        index_type="IVF_PQ",
+        index_type=index_type,
         replace=True,
+        **quantised,
     )
     log.info(
-        f"[index] built IVF_PQ over vector rows={rows} "
+        f"[index] built {index_type} over vector rows={rows} "
         f"partitions={partitions} sub_vectors={sub_vectors}"
     )
 

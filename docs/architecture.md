@@ -270,6 +270,8 @@ No model name is hardcoded anywhere.
 | figure description model | `vlm.model` |
 | chunk sizes | `chunker.parent_chunk_tokens`, `chunker.child_chunk_tokens` |
 | passages returned | `retrieval.final_top_k` |
+| search mode | `retrieval.query_type` |
+| vector index type | `index.vector_type` |
 
 ## What was removed, and why
 
@@ -307,6 +309,19 @@ becomes the recall knob at a size where partitions number in the thousands.
 
 **The table holds children only** — zero parents in 4,739 rows. Coarse-to-fine
 hierarchical search is therefore impossible without changing what is stored.
+
+**LanceDB reports an index type in its own spelling.** The setting says
+`IVF_PQ`; `list_indices()` says `IvfPq`. Comparing them verbatim is always
+false, so the "already indexed?" guard never fired and every ingest silently
+rebuilt the whole vector index — 2.6s on 4,739 rows, and tens of minutes at
+millions. Compare with underscores stripped and case folded, and select the
+index by its *column*, or the full-text index over `text` gets mistaken for it.
+
+**Switching index type is a rebuild, not a migration.** The index is derived
+from the stored `vector` column, so changing `index.vector_type` costs one
+rebuild and touches no rows, no schema and no embeddings. Verified live by
+switching to `IVF_HNSW_SQ` and back, after which the repeat call is a 4.8ms
+no-op. Whether queries are served *during* a rebuild is untested.
 
 **`create_index` takes the column from a positional argument named `metric`.**
 The modern-looking `create_index(config=FTS(), vector_column_name="text")` fails
