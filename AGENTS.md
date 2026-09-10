@@ -5,9 +5,10 @@ Agentic RAG over corporate reports. Personal project — treat it as restricted.
 ## Project
 
 - **Stack:** Python 3.14, LlamaIndex, LanceDB, OpenAI, Typer. Package manager `uv` — every command is `uv run`, never bare `python`/`pytest`.
-- **Pipeline:** extractor → chunker (+ VLM on figures) → OpenAI embeddings → LanceDB → hybrid retrieval (dense + BM25 RRF, HyDE, LLM rerank) → cited synthesis.
+- **Pipeline:** extractor → chunker (+ VLM on figures) → OpenAI embeddings → LanceDB → one filtered search (dense by default) → extraction of the single figure, or cited synthesis for a qualitative question.
 - **Every document is indexed as-is.** There is no document-type taxonomy, no report-type routing, no topic router. A `doc_id` is `sha256(company + file bytes)`, so re-indexing the same file replaces it and two files never collide.
-- **Metadata is open.** `company` is the only always-on filter. Everything else — `year`, `type`, `title`, `benchmark`, anything — is an attribute attached at index time (`-m k=v`, or a `<pdf-stem>.meta.json` sidecar) and filterable at query time (`-f k=v`). Dense and BM25 derive their predicate from the same `AttributeFilter`; never let them diverge. Booleans are stored as `1`/`0` because LlamaIndex `MetadataFilter` rejects `bool`.
+- **A domain owns a table.** `-d <domain>` is required on every ingest and every query; it names the LanceDB table and the prompt set, and an unconfigured domain is refused rather than opening an empty table.
+- **Metadata is open.** `company` is the only always-on filter. Everything else — `year`, `type`, `title`, `benchmark`, anything — is an attribute attached at index time (`-m k=v`) and filterable at query time (`-f k=v`). Dense and BM25 derive their predicate from the same `AttributeFilter`; never let them diverge. Booleans are stored as `1`/`0` because LlamaIndex `MetadataFilter` rejects `bool`.
 - **Answer shape is decided by the question.** Quantitative question → the value alone, or `""` when the document does not state it. Qualitative question → prose. Never a hedge, never a narrative wrapper around a number.
 
 ## Layout
@@ -17,7 +18,10 @@ src/peerdex/
   parse/       extractors: docling, kreuzberg, odl, liteparse. All emit ExtractedDoc.
   chunk/       hierarchical parent/child chunker, VLM description of figures
   index/       LanceDB + LlamaIndex docstore, idempotent per doc_id
-  retrieve/    HybridRetriever: fusion + HyDE + LLM rerank
+  retrieve/    PassageRetriever: one filtered LanceDB search, fts or vector
+  agent/       bounded state machine (_agent), payloads and ports (_model), planning (_planner)
+  quantity/    typed units and scale, and the arithmetic a question may ask for
+  scoring/     pure answer-vs-reference comparison, evaluation only
   synthesize/  cited answer
   vlm/         OpenAI Vision describer + on-disk cache
   shared/      settings, prompts, ids, clients, cache, resilience, logging
@@ -31,9 +35,9 @@ experiments/   slow evaluation and benchmark harnesses, hit real APIs
 | Command | What it does |
 | :--- | :--- |
 | `make install` | `uv sync` |
-| `uv run rag index <pdf> -c <company> -y <year> [-e <extractor>] [-m k=v]` | Ingest one PDF |
-| `uv run rag ask "<q>" -c <company> [-f k=v]` | One question |
-| `uv run rag suite default -c <company> [-f k=v]` | Whole question suite |
+| `uv run rag index <pdf-or-dir> -c <company> -d <domain> -y <year> [-e <extractor>] [-m k=v]` | Ingest one PDF or a directory of them |
+| `uv run rag ask "<q>" -c <company> -d <domain> [-f k=v]` | One question |
+| `uv run rag suite default -c <company> -d <domain> [-f k=v]` | Whole question suite |
 | `make test` | Unit tests, warnings fatal |
 | `make lint` / `make format` | ruff check + format |
 | `make eval COMPANY=<c> YEAR=<y>` | deepeval judge suite (spends API credit) |

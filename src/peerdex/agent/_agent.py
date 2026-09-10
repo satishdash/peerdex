@@ -3,15 +3,39 @@
 An explicit five-step state machine, not an open-ended agent loop. Each step is
 a named method exchanging typed payloads, every retrieval attempt is recorded,
 and the retry loop is bounded by ``max_retries``.
+
+The payloads and ports live in ``_model`` and the two pure planning steps in
+``_planner``; this module is only the state machine that drives them.
 """
 
-import re
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
-from typing import Literal, Protocol
+from collections.abc import Mapping
+from dataclasses import replace
 
 from llama_index.core.schema import NodeWithScore
 
+from peerdex.agent._model import (
+    AgentAnswer,
+    Attempt,
+    Extraction,
+    Plan,
+    PlannerPort,
+    QuantitativeExtractorPort,
+    QuestionKind,
+    ReformulatorPort,
+    RetrievalLike,
+    RetrievedStep,
+    RetrieverPort,
+    SynthesizerPort,
+)
+from peerdex.agent._planner import QueryReformulator, QuestionPlanner
+from peerdex.quantity import (
+    Derivation,
+    DerivationEngine,
+    Quantity,
+    QuantityParser,
+    Unit,
+    UnitRegistry,
+)
 from peerdex.scoring import NumericParser
 from peerdex.shared.logging import get_logger
 from peerdex.shared.metadata import Scalars
@@ -19,187 +43,7 @@ from peerdex.synthesize import Citation, CitedAnswer
 
 log = get_logger("agent")
 
-type QuestionKind = Literal["quantitative", "qualitative"]
-
-_PERIOD: re.Pattern[str] = re.compile(r"\b(?:19|20)\d{2}\b")
 _PERIOD_FILTER: str = "year"
-_SCOPE: re.Pattern[str] = re.compile(r"\b(market-based|location-based)\b", re.IGNORECASE)
-_TRAILING_UNIT: re.Pattern[str] = re.compile(r"\(([^()\s][^()]{0,14})\)\s*$")
-
-
-@dataclass(frozen=True)
-class Plan:
-    """Named plan for one question: its kind and the qualifiers it carries."""
-
-    kind: QuestionKind
-    period: str
-    scope: str
-    unit: str
-
-
-@dataclass(frozen=True)
-class Attempt:
-    """One retrieval attempt: the query used and how many passages came back."""
-
-    query: str
-    passages: int
-
-
-@dataclass(frozen=True)
-class Extraction:
-    """A quantitative extraction: the bare value, its unit, and where it was printed.
-
-    ``label`` is the evidence that a specific printed row was read. Without it a
-    plausible neighbouring figure is indistinguishable from the asked-for one, so
-    an extraction that cannot name its label is treated as a refusal.
-
-    ``column`` is the same evidence along the other axis. A correct row label still
-    leaves one figure per period to choose from, and `298,498` was once returned
-    from a `Baseline 2015` column for a 2025 question. It is empty for a figure
-    that sits in no column at all, which is the normal case in prose.
-    """
-
-    value: str
-    unit: str
-    label: str = ""
-    column: str = ""
-
-
-@dataclass(frozen=True)
-class AgentAnswer:
-    """Everything the agent decided, inspectable per step."""
-
-    kind: QuestionKind
-    value: str
-    unit: str
-    text: str
-    citations: list[Citation]
-    attempts: list[Attempt]
-    refused: bool
-    reason: str
-
-
-@dataclass(frozen=True)
-class RetrievedStep:
-    """Output of one retrieve step: the passages plus the attempt trail so far."""
-
-    question: str
-    plan: Plan
-    nodes: list[NodeWithScore]
-    attempts: list[Attempt]
-    reason: str
-
-
-class RetrievalLike(Protocol):
-    """The slice of a retrieval result the agent reads."""
-
-    @property
-    def nodes(self) -> list[NodeWithScore]: ...
-
-    @property
-    def reason(self) -> str: ...
-
-
-class RetrieverPort(Protocol):
-    """Port: hybrid retrieval over the persisted index."""
-
-    async def retrieve(self, query: str) -> RetrievalLike: ...
-
-
-class QuantitativeExtractorPort(Protocol):
-    """Port: pull the single asked-for figure from passages."""
-
-    async def extract(
-        self, question: str, plan: Plan, nodes: Sequence[NodeWithScore]
-    ) -> Extraction: ...
-
-
-class SynthesizerPort(Protocol):
-    """Port: cited prose synthesis for qualitative questions."""
-
-    async def __call__(self, query: str, nodes: list[NodeWithScore]) -> CitedAnswer: ...
-
-
-class ReformulatorPort(Protocol):
-    """Port: rewrite a failed query from the retrieved passages."""
-
-    def reformulate(self, question: str, nodes: Sequence[NodeWithScore]) -> str: ...
-
-
-class QuestionPlanner:
-    """Plan step: resolve the kind (caller wins) and extract qualifiers, no LLM call."""
-
-    _QUALITATIVE_MARKERS: tuple[str, ...] = (
-        "describe",
-        "explain",
-        "why ",
-        "how does",
-        "how is",
-        "policy",
-        "approach",
-        "strategy",
-        "governance",
-        "process",
-    )
-
-    def plan(self, question: str, kind: QuestionKind | None = None, period: str = "") -> Plan:
-        """Resolve kind and qualifiers; a caller-supplied kind or period fills the gaps.
-
-        A period spelled out in the question is more specific than the one the
-        corpus is filtered to, so it wins.
-        """
-        resolved: QuestionKind = kind if kind is not None else self._classify(question)
-        return Plan(
-            kind=resolved,
-            period=self._first(_PERIOD, question) or period,
-            scope=self._first(_SCOPE, question).lower(),
-            unit=self._trailing_unit(question),
-        )
-
-    def _classify(self, question: str) -> QuestionKind:
-        lowered: str = question.lower()
-        qualitative: bool = any(marker in lowered for marker in self._QUALITATIVE_MARKERS)
-        return "qualitative" if qualitative else "quantitative"
-
-    @staticmethod
-    def _first(pattern: re.Pattern[str], question: str) -> str:
-        match: re.Match[str] | None = pattern.search(question)
-        return match[0] if match else ""
-
-    @staticmethod
-    def _trailing_unit(question: str) -> str:
-        match: re.Match[str] | None = _TRAILING_UNIT.search(question.strip())
-        return match[1] if match else ""
-
-
-class QueryReformulator:
-    """Reflect step: rewrite a failed query with headings and table row labels seen so far."""
-
-    def __init__(self, max_terms: int = 8) -> None:
-        self._max_terms: int = max_terms
-
-    def reformulate(self, question: str, nodes: Sequence[NodeWithScore]) -> str:
-        """The question enriched with passage vocabulary; unchanged when there is none."""
-        vocabulary: list[str] = self._vocabulary(nodes)[: self._max_terms]
-        return question if not vocabulary else f"{question} {' '.join(vocabulary)}"
-
-    def _vocabulary(self, nodes: Sequence[NodeWithScore]) -> list[str]:
-        terms: dict[str, None] = {}
-        for node in nodes:
-            for term in [*self._headings(node), *self._row_labels(node)]:
-                terms.setdefault(term, None)
-        return list(terms)
-
-    @staticmethod
-    def _headings(node: NodeWithScore) -> list[str]:
-        heading_path: str = str(node.node.metadata.get("heading_path") or "")
-        return [part.strip() for part in heading_path.split(" > ") if part.strip()]
-
-    @staticmethod
-    def _row_labels(node: NodeWithScore) -> list[str]:
-        lines: list[str] = node.node.get_content().splitlines()
-        raw: list[str] = [line.split("|")[1].strip() for line in lines if line.startswith("|")]
-        return [label for label in raw if label.strip("- ")]
 
 
 class AgentRAGWorkflow:
@@ -211,15 +55,21 @@ class AgentRAGWorkflow:
         retriever: RetrieverPort,
         extractor: QuantitativeExtractorPort,
         synthesizer: SynthesizerPort,
-        planner: QuestionPlanner | None = None,
+        planner: PlannerPort | None = None,
         reformulator: ReformulatorPort | None = None,
+        quantities: QuantityParser | None = None,
+        units: UnitRegistry | None = None,
+        engine: DerivationEngine | None = None,
         max_retries: int = 2,
     ) -> None:
         self._retriever: RetrieverPort = retriever
         self._extractor: QuantitativeExtractorPort = extractor
         self._synthesizer: SynthesizerPort = synthesizer
-        self._planner: QuestionPlanner = planner or QuestionPlanner()
+        self._planner: PlannerPort = planner or QuestionPlanner()
         self._reformulator: ReformulatorPort = reformulator or QueryReformulator()
+        self._quantities: QuantityParser = quantities or QuantityParser()
+        self._units: UnitRegistry = units or UnitRegistry()
+        self._engine: DerivationEngine = engine or DerivationEngine()
         self._max_retries: int = max_retries
         self._number_parser: NumericParser = NumericParser()
 
@@ -248,18 +98,42 @@ class AgentRAGWorkflow:
         )
 
     async def _answer_quantitative(self, retrieved: RetrievedStep) -> AgentAnswer:
+        derived: Quantity | None = await self._derived(retrieved)
+        if derived is None:
+            return await self._extracted(retrieved)
+        log.info(f"[agent:derive] value={derived.rendered} unit={derived.unit.symbol}")
+        return self._quantitative_answer(retrieved, derived.rendered, derived.unit.symbol)
+
+    async def _derived(self, retrieved: RetrievedStep) -> Quantity | None:
+        """The figure the question's own arithmetic asks for, or None when it asks for none.
+
+        Each operand is extracted from the passages already retrieved, so a derivation
+        costs extractions and no further retrieval.
+        """
+        derivation: Derivation | None = retrieved.plan.derivation
+        if derivation is None or not retrieved.nodes:
+            return None
+        parts: list[Quantity | None] = [
+            await self._operand(retrieved, operand) for operand in derivation.operands
+        ]
+        return self._engine.combine(derivation, parts)
+
+    async def _operand(self, retrieved: RetrievedStep, operand: str) -> Quantity | None:
+        plan: Plan = replace(retrieved.plan, unit="", derivation=None)
+        extraction: Extraction = await self._extractor.extract(operand, plan, retrieved.nodes)
+        return self._quantities.parse(extraction.value, extraction.unit)
+
+    async def _extracted(self, retrieved: RetrievedStep) -> AgentAnswer:
         extraction: Extraction | None = await self._extraction(retrieved)
         if extraction is not None:
             log.info(
                 f"[agent:extract] value={extraction.value} unit={extraction.unit} "
                 f"label={extraction.label!r}"
             )
-            return self._quantitative_answer(retrieved, extraction)
+            return self._extracted_answer(retrieved, extraction)
         retry: RetrievedStep | None = await self._reflect(retrieved)
         return (
-            self._quantitative_refusal(retrieved)
-            if retry is None
-            else await self._answer_quantitative(retry)
+            self._quantitative_refusal(retrieved) if retry is None else await self._extracted(retry)
         )
 
     async def _reflect(self, retrieved: RetrievedStep) -> RetrievedStep | None:
@@ -295,11 +169,31 @@ class AgentRAGWorkflow:
         tried: set[str] = {attempt.query for attempt in retrieved.attempts}
         return None if candidate in tried else candidate
 
-    def _quantitative_answer(self, retrieved: RetrievedStep, extraction: Extraction) -> AgentAnswer:
+    def _extracted_answer(self, retrieved: RetrievedStep, extraction: Extraction) -> AgentAnswer:
+        """The extracted figure, in the unit the question asked for where that is possible."""
+        value, unit = self._as_asked(retrieved.plan, extraction)
+        return self._quantitative_answer(retrieved, value, unit)
+
+    def _as_asked(self, plan: Plan, extraction: Extraction) -> tuple[str, str]:
+        """The figure converted to the unit the question states, or exactly as extracted."""
+        quantity: Quantity | None = self._quantities.parse(extraction.value, extraction.unit)
+        target: Unit | None = self._units.resolve(plan.unit) if plan.unit else None
+        if quantity is None or target is None:
+            return extraction.value, extraction.unit
+        return self._in_unit(quantity, target, extraction)
+
+    @staticmethod
+    def _in_unit(quantity: Quantity, target: Unit, extraction: Extraction) -> tuple[str, str]:
+        if target.dimension != quantity.unit.dimension:
+            return extraction.value, extraction.unit
+        converted: Quantity = quantity.to(target)
+        return converted.rendered, converted.unit.symbol
+
+    def _quantitative_answer(self, retrieved: RetrievedStep, value: str, unit: str) -> AgentAnswer:
         return AgentAnswer(
             kind=retrieved.plan.kind,
-            value=extraction.value,
-            unit=extraction.unit,
+            value=value,
+            unit=unit,
             text="",
             citations=self._citations(retrieved.nodes),
             attempts=retrieved.attempts,
@@ -378,16 +272,17 @@ async def answer(
     question: str,
     *,
     company: str,
+    domain: str,
     filters: Mapping[str, Scalars] | None = None,
     kind: QuestionKind | None = None,
 ) -> AgentAnswer:
-    """One-shot agentic answer over the persisted index for one company."""
+    """One-shot agentic answer over one domain's index, for one company."""
     from peerdex.agent._extractor import LLMQuantitativeExtractor
     from peerdex.retrieve import PassageRetriever
     from peerdex.synthesize import synthesize
 
     workflow: AgentRAGWorkflow = AgentRAGWorkflow(
-        retriever=PassageRetriever(company=company, attributes=filters),
+        retriever=PassageRetriever(company=company, domain=domain, attributes=filters),
         extractor=LLMQuantitativeExtractor(),
         synthesizer=synthesize,
     )

@@ -5,10 +5,10 @@ until it is decided.
 
 ## Where we are
 
-End to end on the first corpus: **12 of 28 correct**, 11 confidently wrong, 5
-abstained. Per stage: parse 28/28 (loose — 1% tolerance with power-of-ten
+End to end on the first corpus: **13 of 28 correct**, 10 confidently wrong, 5
+missed. Per stage: parse 28/28 (loose — 1% tolerance with power-of-ten
 freedom across the whole corpus, so it over-reports), figures +0, retrieval
-19/28, end to end 12/28.
+19/28, end to end 13/28.
 
 **Target 90% is not reachable against this reference, and step 3 proved why.**
 Every disputed question was audited for whether its reference value appears on a
@@ -22,7 +22,8 @@ related table row. Of 17:
 | reference matches no related row | 11 | unconfirmable; several look like a unit convention the documents never print |
 
 So the honest ceiling here is roughly **14 of 28** until the reference is
-corrected. Chasing 25/28 against this ruler would be fitting to its errors.
+corrected, and 13 of it is now reached. Chasing 25/28 against this ruler would
+be fitting to its errors.
 A corrected reference, or a second corpus, is now the only way to raise the
 number honestly.
 
@@ -37,9 +38,8 @@ numbers so earlier references stay valid.
 
 | step | work | bucket |
 | --- | --- | --- |
-| 5 | Typed units and scale, plus a derivation step for sums, differences, ratios and unit conversion | B (4) |
 | 6 | Replace `final_top_k` with a score- or coverage-based cutoff | — |
-| 7 | Second corpus — directory ingest, sidecar-driven year, then score it | — |
+| 7 | Second corpus — ingested; scoring blocked on the reference values | — |
 | 8 | Speed and scale — docstore off the single JSON, then configurable document concurrency | — |
 | 9 | Agent framework — a real LlamaIndex agent instead of the hand-written retry | — |
 
@@ -47,8 +47,8 @@ Each step ends with a measured number over three runs, never one.
 
 **Note on step 7**: it is the only check against fitting one report, and after
 step 3's audit it is also the only way left to raise the accuracy number
-honestly. If step 5's schema turns out to be corpus-shaped, part of it gets
-redone.
+honestly. It is also where step 5's unit table gets its first real test: only
+four of its dimensions are exercised by this corpus.
 
 ## Pool — decide when the plan above is done
 
@@ -65,6 +65,8 @@ redone.
 | Hierarchical vector search | blocked: the table holds 0 parents of 4,739 rows. Parents live only in the docstore |
 | Re-test the index types at production scale | all seven tied on recall and latency at 4,739 rows, where the metadata filter dominates the query. Storage decided it. HNSW's sublinear query time needs 400k+ rows to appear, so it is unadopted on present evidence rather than disproven — re-run when a table is that size |
 | One value answered for several questions | `6,197,690` was returned for three different Scope 3 questions and `1.1%` for three others. The row label is being satisfied by a plausible neighbour — the same class of bug the period column just fixed, one axis over |
+| Difference and ratio derivations are unexercised | the sum path is measured; no question in this suite spells out a subtraction or a division, so those two operators are covered by unit tests only |
+| Unit conversion is unexercised | the same. No question here states a unit that the printed figure disagrees with, so conversion changed nothing measurable and is covered by unit tests only |
 | Correct the reference | step 3 showed 15 of 17 disputed references are contradicted, absent or unconfirmable. Until they are corrected the accuracy number is capped around 14/28 by the ruler. Needs the source that produced them, not our own answers |
 
 ## Debt
@@ -76,6 +78,7 @@ redone.
 | `scripts/` formatting | two pre-existing `ruff format` failures, outside `make lint`'s scope |
 | Unused embeddings | resolved by step 4 — they are now the default read path |
 | No embedding cache | unlike the parse, embeddings are recomputed on every re-index at API cost |
+| Three files over the 400-line rule | `chunk/_chunker.py` 511 and `parse/_liteparse.py` 429 are long-standing; `index/_index.py` 435 grew during the domain change and is the one to split first. `agent/_agent.py` was split at 463 into `_agent` / `_model` / `_planner` |
 | Debloat pass | across the codebase |
 
 ## Done
@@ -93,6 +96,7 @@ redone.
 | Step 4 — dense retrieval | `query_type` is a setting, `vector` the default, and the IVF_PQ index's partitions and sub-vectors are derived from the row count rather than tuned to one corpus. Retrieval 17/28 → **19/28**. Full text and dense return opposite score polarities, normalised in one place; `refine_factor=5` is mandatory or product quantisation gives the whole gain back |
 | Step 3 — audit the reference | A probe decides, per disputed question, whether the reference value sits on a table row whose label relates to the question — a fact about the documents, not an opinion. The first version asked only whether the number existed anywhere and so decided nothing: with 1% tolerance and power-of-ten freedom almost everything matches something. Verdict on 17: 2 ours, 2 contradicted, 2 absent, 11 unconfirmable |
 | Extractor cites the period column | The row label alone left one figure per period to choose from, and `298,498` came back from a `Baseline 2015` column under a correct `Scope 1` label. The extractor now names the column and refuses when it states a different period; the asked-for period reaches it from the `year` filter, since the question text rarely contains it. `match` 11 → **12**, `mismatch` 13 → **11**, six fabrications became abstentions. Only columns that state a period are judged — demanding one of every column refused two correct board counts under a `Female` header |
+| Step 5 — typed units and derivations | `peerdex.quantity`: a unit registry, a `Quantity` whose arithmetic converts before it combines and refuses across dimensions, and a derivation step allowed **only** where the question spells the arithmetic out. `match` 12 → **13**, `mismatch` 11 → **10** — `Total GHG emissions (Scope 1 + Scope 2 + Scope 3)` is now summed from its three operands instead of read off a neighbouring row, and returns the reference value exactly. Measured first: **0 of 16** wrong-or-missed answers were off by a power of ten or any unit factor, so units and scale were worth nothing here and only the derivation moved the number. Kept as the seam a second domain needs, not counted as accuracy |
 | Step 1 — parse cache | `peerdex.index.parse_cached`, keyed on file bytes plus extractor name and version. Measured cold 39.82s → warm 0.01s on a 34-page document, with blocks, pages, `source_meta` and figure images identical. `index_doc` shrank by three lines |
 
 ## Rules

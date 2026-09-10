@@ -8,7 +8,7 @@ from typing import Any
 from llama_index.core.base.llms.types import ChatMessage
 from llama_index.core.schema import NodeWithScore
 
-from peerdex.agent._agent import Extraction, Plan
+from peerdex.agent._model import Extraction, Plan
 from peerdex.shared.llm_llama import CachedLIOpenAI
 from peerdex.shared.logging import get_logger
 from peerdex.shared.settings import get_settings

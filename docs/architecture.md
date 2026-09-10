@@ -127,7 +127,7 @@ thresholds — because those are logos and rules, not data.
                                                 │
         ┌───────────────────────────────────────┴──────────────┐
         ▼                                                      ▼
-  LanceDB table `peer_nodes`                          docstore JSON
+  LanceDB table `<domain>`                            docstore JSON
   one row per CHILD chunk:                            parents + children
     id, text, vector, metadata struct                 with relationships
         │
@@ -223,6 +223,28 @@ demanding a period of it refused two correct answers when measured.
 **A quantitative answer is the value alone or an empty string** — never a hedge,
 never prose around a number. Qualitative questions go to a synthesis step
 instead and return prose. Both carry citations.
+
+**One exception to "never compute": a question that spells the arithmetic out.**
+
+```
+  "Total GHG emissions (Scope 1 + Scope 2 + Scope 3)"
+            │
+            ▼
+  operands named by the question, each extracted from the passages
+  already retrieved   ──►  62,587 t   108,000 t   6,100,000 t
+            │                    │
+            │        typed: unit + scale, converted before adding
+            ▼
+      6,270,587 t          any operand missing, or two dimensions
+                           that do not combine ──► derive nothing,
+                           fall back to the printed figure
+```
+
+The question is the only mandate to compute; nothing is derived from a question
+that merely sounds derived ("water intensity ratio per revenue" names no
+operands). Magnitudes are `Decimal`, so a sum does not depend on the order it
+was added in. Units live in `peerdex.quantity`, which also converts a figure to
+the unit a question states.
 
 ## Stage 7 — reflect: one bounded retry
 
@@ -358,6 +380,17 @@ that state a period are judged. Measured both ways — 10 matches against 12.
 
 **Scoring must read the unit.** `58,739` reported in `$m` looks a millionfold
 wrong against `58739000000` until the unit is consulted.
+
+**A unit that names a denominator must not resolve.** "tonnes per employee"
+reads as tonnes if only the first word is looked up, silently retyping an
+intensity as a total. `UnitRegistry` refuses any text containing `per` or `/`.
+The same care applies to lowercase collisions: `mt` is read as a megatonne and
+`ml` as a megalitre, the way reports use them.
+
+**Typed units bought no accuracy on the first corpus.** Of 16 wrong-or-missed
+answers, none was off by a power of ten or any unit factor. The unit table is
+there as the seam a second document domain needs; only the derivation step moved
+the number, by one question.
 
 **Repeat runs of an LLM stage are not independent.** Completions are cached, so
 running stage 3 three times returns identical answers by construction. The

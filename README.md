@@ -11,8 +11,8 @@ document type is the schema of facts wanted and the questions asked.
 ```bash
 uv sync
 cp .env.example .env          # then set OPENAI_API_KEY
-uv run rag index report.pdf -c acme -y 2025
-uv run rag ask "Gross global Scope 1 emissions" -c acme -f year=2025
+uv run rag index report.pdf -c acme -d corporate -y 2025
+uv run rag ask "Gross global Scope 1 emissions" -c acme -d corporate -f year=2025
 ```
 
 ## How it works
@@ -43,11 +43,14 @@ Every document is indexed as-is — no report-type taxonomy, no routing. `compan
 is the only fixed filter. Everything else is an attribute:
 
 ```bash
-uv run rag index report.pdf -c acme -y 2025 -m benchmark=true
-uv run rag ask "Total water consumption" -c acme -f benchmark=true
+uv run rag index report.pdf -c acme -d corporate -y 2025 -m benchmark=true
+uv run rag ask "Total water consumption" -c acme -d corporate -f benchmark=true
 ```
 
-Attributes also load automatically from a `<pdf-stem>.meta.json` sidecar.
+`-d` names the domain, which is one LanceDB table and one prompt set. It is
+required on every ingest and every query, and an unconfigured domain is refused
+rather than silently opening an empty table.
+
 `doc_id` is `sha256(company + extractor + file bytes)`, so re-indexing a file
 replaces it and extractor variants coexist for comparison.
 
@@ -89,8 +92,8 @@ Scored over the 28 questions that carry a reference value.
 | 0 parse | reference value present in the extracted text | 28/28 ⚠ | 28/28 ⚠ |
 | 1 figures | values reachable *only* via figure descriptions | +0 | +0 |
 | 2 retrieval | value present in the retrieved passages | 17/28 | **19/28** |
-| 3 end to end | final answer matches the reference | 12/28 | **12/28** |
-| — | confidently wrong (`mismatch`) | **10** | 11 |
+| 3 end to end | final answer matches the reference | 12/28 | **13/28** |
+| — | confidently wrong (`mismatch`) | 10 | **10** |
 | — | abstained where a value exists (`missed`) | 6 | **5** |
 | — | answered where the reference is empty (`extra`) | 32 | 31 |
 
@@ -104,11 +107,21 @@ refusing when that column states a different period, closed the gap:
 | dense, end to end | match | mismatch | missed | extra |
 | --- | --- | --- | --- | --- |
 | row label only | 11 | 13 | 4 | 35 |
-| + period column required | **12** | **11** | 5 | 31 |
+| + period column required | 12 | 11 | 5 | 31 |
+| + derived where the question asks | **13** | **10** | 5 | 31 |
 
 Six fabrications became abstentions in the same change. The guard judges only
 columns that state a period — an early version demanded one of *every* column
 and refused two correct board-member counts sitting under a `Female` header.
+
+The last row is one question: `Total GHG emissions (Scope 1 + Scope 2 + Scope
+3)`, whose reference is a sum the documents print nowhere. Because the question
+spells the arithmetic out, the agent extracts each operand and adds them as
+typed quantities. Every other question still reads one printed figure.
+
+**Typed units and scale bought nothing measurable here** — of the 16
+wrong-or-missed answers, none was off by a power of ten or any unit factor. The
+unit table is the seam a second document domain needs, not an accuracy result.
 
 ### Retrieval mode, measured directly
 
@@ -190,7 +203,7 @@ and one year, and none of them is evidence that the system generalises.
   clearest case: total hazardous waste, reference `19.65`, which matches only a
   Scope 3 emissions category (`19,661` tonnes CO₂e) while the documents print
   `Total hazardous waste | Tonnes | 8,388` — the figure we returned and were
-  scored wrong for. So `12/28` is a floor set partly by the ruler, not the
+  scored wrong for. So `13/28` is a floor set partly by the ruler, not the
   system. Anything above roughly `14/28` cannot be earned without a corrected
   reference.
 - **Repeat runs of an LLM stage are not independent** — completions are cached,
