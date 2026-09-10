@@ -1,15 +1,9 @@
-"""Per-document metadata: identity, free-form scalar attributes, sources and filters."""
+"""Per-document metadata: identity, free-form scalar attributes and filters."""
 
-import json
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
-from pathlib import Path
 from typing import Any, TypeIs
-
-from peerdex.shared.logging import get_logger
-
-log = get_logger("shared.metadata")
 
 type Scalar = str | int | float | bool
 type Scalars = Scalar | Sequence[Scalar]
@@ -46,7 +40,6 @@ OPAQUE_KEYS: frozenset[str] = frozenset(
     }
 )
 
-_SIDECAR_SUFFIX: str = ".meta.json"
 _ALTERNATIVE_SEPARATOR: re.Pattern[str] = re.compile(r"(?<!\\),")
 
 
@@ -85,87 +78,6 @@ class DocumentMetadata:
         if not _is_scalar(value):
             raise ValueError(f"attribute {key!r} must be a scalar, got {type(value).__name__}")
         return canonical_scalar(value)
-
-
-class AttributeSource(ABC):
-    """Port: where per-document attributes come from."""
-
-    @abstractmethod
-    def load(self, source_path: Path) -> dict[str, Scalar]:
-        """Attributes for the document at ``source_path``; empty when none."""
-
-
-def _sidecar_object(source_path: Path) -> dict[str, Any]:
-    """The single object inside ``<pdf-stem>.meta.json``, empty when unusable.
-
-    The file wraps its content in one entry keyed by the document's storage path,
-    so the payload of interest is that entry's value rather than the top level.
-    """
-    try:
-        payload: Any = json.loads(source_path.with_suffix(_SIDECAR_SUFFIX).read_text())
-    except OSError, json.JSONDecodeError:
-        return {}
-    if not isinstance(payload, dict):
-        return {}
-    inner: Any = next(iter(payload.values()), None)
-    return inner if isinstance(inner, dict) else {}
-
-
-class SidecarAttributeSource(AttributeSource):
-    """Reads ``<pdf-stem>.meta.json`` next to the PDF; missing or malformed yields nothing."""
-
-    def load(self, source_path: Path) -> dict[str, Scalar]:
-        return {
-            str(key): value
-            for key, value in _sidecar_object(source_path).items()
-            if _is_scalar(value) and self._not_reserved(str(key))
-        }
-
-    @staticmethod
-    def _not_reserved(key: str) -> bool:
-        if key in RESERVED_KEYS:
-            log.info(f"[metadata] sidecar key {key!r} is reserved, dropped")
-            return False
-        return True
-
-
-class SidecarYearSource:
-    """Reads the reporting year from ``<pdf-stem>.meta.json``.
-
-    ``year`` is identity, not a free attribute, so ``SidecarAttributeSource`` drops
-    it as reserved. It is read separately here because a corpus states each
-    document's year only in its sidecar, and the years differ within one directory.
-    """
-
-    def load(self, source_path: Path) -> int | None:
-        """The document's reporting year, or None when the sidecar does not state one."""
-        year: Any = _sidecar_object(source_path).get("year")
-        if isinstance(year, bool) or not isinstance(year, int):
-            return None
-        return year
-
-
-class ExplicitAttributeSource(AttributeSource):
-    """Attributes handed over explicitly, e.g. from the command line."""
-
-    def __init__(self, attributes: Mapping[str, Scalar]) -> None:
-        self._attributes: dict[str, Scalar] = dict(attributes)
-
-    def load(self, source_path: Path) -> dict[str, Scalar]:
-        return dict(self._attributes)
-
-
-class CompositeAttributeSource(AttributeSource):
-    """Merges several sources in order; later sources win."""
-
-    def __init__(self, sources: Sequence[AttributeSource]) -> None:
-        self._sources: list[AttributeSource] = list(sources)
-
-    def load(self, source_path: Path) -> dict[str, Scalar]:
-        merged: dict[str, Scalar] = {}
-        for source in self._sources:
-            merged.update(source.load(source_path))
-        return merged
 
 
 class AttributeFilter:

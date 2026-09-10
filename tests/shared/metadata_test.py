@@ -1,79 +1,19 @@
-"""Unit tests for per-document metadata, attribute sources, filters and parsing."""
-
-import json
-from pathlib import Path
+"""Unit tests for per-document metadata, attribute validation, filters and parsing."""
 
 import pytest
 
 from peerdex.shared.metadata import (
     AttributeFilter,
-    CompositeAttributeSource,
     DocumentMetadata,
-    ExplicitAttributeSource,
     KeyValueParser,
     MetadataVisibility,
     Scalar,
     ScalarSetValueParser,
     ScalarValueParser,
-    SidecarAttributeSource,
-    SidecarYearSource,
 )
 
 SCALAR: ScalarValueParser = ScalarValueParser()
 SCALAR_SET: ScalarSetValueParser = ScalarSetValueParser()
-
-REAL_SIDECAR_PAYLOAD: dict[str, dict[str, Scalar]] = {
-    "Acme PLC/f797953b.pdf": {
-        "title": "Sustainability Data Content Index 2025",
-        "file_name": "Data-Index-2025.pdf",
-        "type": "Sustainability report",
-        "year": 2025,
-        "bucket_key": "Acme PLC/f797953b.pdf",
-        "url": "https://reports.example.com/x/Data-Index-2025.pdf",
-    }
-}
-
-
-def _pdf_with_sidecar(tmp_path: Path, sidecar_text: str | None) -> Path:
-    pdf: Path = tmp_path / "f797953b.pdf"
-    pdf.write_bytes(b"%PDF")
-    if sidecar_text is not None:
-        (tmp_path / "f797953b.meta.json").write_text(sidecar_text)
-    return pdf
-
-
-def test_given_a_sidecar_with_a_year_when_read_then_it_is_the_documents_year(
-    tmp_path: Path,
-) -> None:
-    """A corpus states each document's reporting year only in its sidecar.
-
-    ``year`` is a reserved key, so it is deliberately dropped from free attributes.
-    Identity needs its own reader or a directory of documents cannot be ingested.
-    """
-    pdf: Path = _pdf_with_sidecar(tmp_path, json.dumps(REAL_SIDECAR_PAYLOAD))
-
-    assert SidecarYearSource().load(pdf) == 2025
-
-
-@pytest.mark.parametrize(
-    "sidecar_text",
-    [
-        None,
-        "{",
-        "{}",
-        '{"Acme PLC/f797953b.pdf": {}}',
-        '{"Acme PLC/f797953b.pdf": {"year": "twenty twenty five"}}',
-        '{"Acme PLC/f797953b.pdf": {"year": true}}',
-        '{"Acme PLC/f797953b.pdf": {"year": null}}',
-    ],
-)
-def test_given_no_usable_year_when_read_then_nothing_is_returned(
-    tmp_path: Path, sidecar_text: str | None
-) -> None:
-    """A year that is absent, unparseable or not a year must never be guessed at."""
-    pdf: Path = _pdf_with_sidecar(tmp_path, sidecar_text)
-
-    assert SidecarYearSource().load(pdf) is None
 
 
 def test_given_valid_attributes_when_constructed_then_identity_normalized() -> None:
@@ -108,55 +48,6 @@ def test_given_non_scalar_attribute_when_constructed_then_rejected(value: object
         DocumentMetadata(
             company="a", year=2025, source_uri="u", extractor="e", attributes={"k": value}
         )
-
-
-def test_given_real_sidecar_shape_when_loaded_then_inner_scalars_minus_reserved(
-    tmp_path: Path,
-) -> None:
-    pdf: Path = _pdf_with_sidecar(tmp_path, json.dumps(REAL_SIDECAR_PAYLOAD))
-    attributes: dict[str, Scalar] = SidecarAttributeSource().load(pdf)
-    assert attributes == {
-        "title": "Sustainability Data Content Index 2025",
-        "file_name": "Data-Index-2025.pdf",
-        "type": "Sustainability report",
-        "bucket_key": "Acme PLC/f797953b.pdf",
-        "url": "https://reports.example.com/x/Data-Index-2025.pdf",
-    }
-
-
-@pytest.mark.parametrize(
-    "sidecar_text",
-    [
-        pytest.param(None, id="missing-file"),
-        pytest.param("{not json", id="malformed-json"),
-        pytest.param("[1, 2]", id="top-level-list"),
-        pytest.param('{"k": "not an object"}', id="inner-not-object"),
-        pytest.param("{}", id="empty-object"),
-    ],
-)
-def test_given_unusable_sidecar_when_loaded_then_no_attributes(
-    tmp_path: Path, sidecar_text: str | None
-) -> None:
-    pdf: Path = _pdf_with_sidecar(tmp_path, sidecar_text)
-    assert SidecarAttributeSource().load(pdf) == {}
-
-
-def test_given_non_scalar_sidecar_values_when_loaded_then_filtered(tmp_path: Path) -> None:
-    payload: str = json.dumps({"k.pdf": {"nested": {"a": 1}, "items": [1], "ok": "v"}})
-    pdf: Path = _pdf_with_sidecar(tmp_path, payload)
-    assert SidecarAttributeSource().load(pdf) == {"ok": "v"}
-
-
-def test_given_explicit_source_when_loaded_then_returns_given_attributes(tmp_path: Path) -> None:
-    source: ExplicitAttributeSource = ExplicitAttributeSource({"benchmark": True, "n": 3})
-    assert source.load(tmp_path / "any.pdf") == {"benchmark": True, "n": 3}
-
-
-def test_given_composite_sources_when_loaded_then_later_source_wins(tmp_path: Path) -> None:
-    first: ExplicitAttributeSource = ExplicitAttributeSource({"type": "A", "x": 1})
-    second: ExplicitAttributeSource = ExplicitAttributeSource({"type": "B"})
-    merged: dict[str, Scalar] = CompositeAttributeSource([first, second]).load(tmp_path / "a.pdf")
-    assert merged == {"type": "B", "x": 1}
 
 
 @pytest.mark.parametrize(

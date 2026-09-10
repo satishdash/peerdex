@@ -1,108 +1,97 @@
-"""Ingesting a directory, where each document states its own reporting year.
+"""Ingest fans out over a directory and always leaves the rows searchable."""
 
-A corpus arrives as a directory of PDFs with a sidecar each, and the year differs
-per document. Requiring it on the command line makes such a corpus un-ingestable
-in one command, and passing one year for all of them would mislabel most.
-"""
-
-import json
 from pathlib import Path
 from typing import Any
 
 import pytest
 from pytest_mock import MockerFixture
 
-from peerdex.index._index import _resolved_year, index_dir
-
-def _document(directory: Path, stem: str, year: int | None = None) -> Path:
-    """A PDF in ``directory``, with a sidecar when ``year`` is given."""
-    pdf: Path = directory / f"{stem}.pdf"
-    pdf.write_bytes(b"%PDF")
-    if year is not None:
-        payload: dict[str, dict[str, Any]] = {f"Acme PLC/{stem}.pdf": {"year": year}}
-        (directory / f"{stem}.meta.json").write_text(json.dumps(payload))
-    return pdf
+from peerdex.index._index import index_dir, index_doc
+from peerdex.shared.settings import resolve_domain
 
 
-def test_given_an_explicit_year_when_resolving_then_it_wins_over_the_sidecar(
-    tmp_path: Path,
-) -> None:
-    """Explicit input beats a file on disk, the same rule attributes already follow."""
-    pdf: Path = _document(tmp_path, "a", year=2023)
+def _stub(mocker: MockerFixture) -> tuple[Any, Any]:
+    """The per-document work and the index step, both stubbed out.
 
-    assert _resolved_year(pdf, 2025) == 2025
-
-
-def test_given_no_explicit_year_when_resolving_then_the_sidecar_supplies_it(
-    tmp_path: Path,
-) -> None:
-    """This is what lets one command ingest a directory spanning several years."""
-    pdf: Path = _document(tmp_path, "a", year=2023)
-
-    assert _resolved_year(pdf, None) == 2023
-
-
-def test_given_neither_year_when_resolving_then_it_fails_naming_the_document(
-    tmp_path: Path,
-) -> None:
-    """Mislabelling a document's year silently corrupts every year-filtered answer."""
-    pdf: Path = _document(tmp_path, "a")
-
-    with pytest.raises(ValueError, match=r"a\.pdf"):
-        _resolved_year(pdf, None)
-
-
-async def test_given_a_directory_when_indexing_then_every_pdf_is_indexed_in_order(
-    mocker: MockerFixture, tmp_path: Path
-) -> None:
-    """Sorted order so a run is reproducible and a partial run is resumable by eye."""
-    for stem in ("c", "a", "b"):
-        _document(tmp_path, stem, year=2023)
+    ``_index_table`` must be stubbed or these tests reach the real LanceDB.
+    """
     one: Any = mocker.patch(
-        "peerdex.index._index.index_doc", mocker.AsyncMock(return_value={"doc_id": "x"})
+        "peerdex.index._index._ingest_one", mocker.AsyncMock(return_value={"doc_id": "x"})
     )
-
-    results: list[dict[str, Any]] = await index_dir(tmp_path, company="acme")
-
-    assert [call.args[0].name for call in one.call_args_list] == ["a.pdf", "b.pdf", "c.pdf"]
-    assert len(results) == 3
+    return one, mocker.patch("peerdex.index._index._index_table")
 
 
-async def test_given_a_directory_of_mixed_files_when_indexing_then_only_pdfs_are_indexed(
-    mocker: MockerFixture, tmp_path: Path
+def _pdfs(directory: Path, *stems: str) -> None:
+    for stem in stems:
+        (directory / f"{stem}.pdf").write_bytes(b"%PDF")
+
+
+@pytest.mark.parametrize(
+    ("stems", "extra", "expected"),
+    [
+        pytest.param(("c", "a", "b"), None, ["a.pdf", "b.pdf", "c.pdf"], id="sorted"),
+        pytest.param(("a",), "notes.txt", ["a.pdf"], id="non-pdfs-skipped"),
+    ],
+)
+async def test_given_a_directory_when_indexed_then_the_right_pdfs_run_in_order(
+    mocker: MockerFixture,
+    tmp_path: Path,
+    stems: tuple[str, ...],
+    extra: str | None,
+    expected: list[str],
 ) -> None:
-    """The sidecars sit beside the PDFs, so a naive glob would try to parse them."""
-    _document(tmp_path, "a", year=2023)
-    (tmp_path / "notes.txt").write_text("x")
-    one: Any = mocker.patch(
-        "peerdex.index._index.index_doc", mocker.AsyncMock(return_value={"doc_id": "x"})
-    )
+    """Sorted so a run is reproducible; non-PDFs are skipped so a glob cannot parse them."""
+    _pdfs(tmp_path, *stems)
+    if extra:
+        (tmp_path / extra).write_text("x")
+    one, _ = _stub(mocker)
 
-    await index_dir(tmp_path, company="acme")
+    await index_dir(tmp_path, company="acme", domain="corporate", year=2025)
 
-    assert [call.args[0].name for call in one.call_args_list] == ["a.pdf"]
+    assert [call.args[0].name for call in one.call_args_list] == expected
 
 
-async def test_given_a_directory_when_indexing_then_each_documents_own_year_is_used(
-    mocker: MockerFixture, tmp_path: Path
+@pytest.mark.parametrize("entry", ["doc", "dir"])
+async def test_given_either_entry_point_when_indexed_then_the_table_is_indexed_once(
+    mocker: MockerFixture, tmp_path: Path, entry: str
 ) -> None:
-    """One corpus spans several reporting years; a single year for all would mislabel."""
-    _document(tmp_path, "a", year=2023)
-    _document(tmp_path, "b", year=2025)
-    one: Any = mocker.patch(
-        "peerdex.index._index.index_doc", mocker.AsyncMock(return_value={"doc_id": "x"})
-    )
+    """Indexing belongs to ingest. Once per call, not per document: optimising compacts all."""
+    _pdfs(tmp_path, "a", "b")
+    _, indexed = _stub(mocker)
 
-    await index_dir(tmp_path, company="acme")
+    if entry == "doc":
+        await index_doc(tmp_path / "a.pdf", company="acme", domain="corporate", year=2025)
+    else:
+        await index_dir(tmp_path, company="acme", domain="corporate", year=2025)
 
-    assert [call.kwargs["year"] for call in one.call_args_list] == [2023, 2025]
+    indexed.assert_called_once()
 
 
-async def test_given_an_empty_directory_when_indexing_then_it_fails_rather_than_succeeding(
+async def test_given_an_empty_directory_when_indexed_then_it_fails(
     mocker: MockerFixture, tmp_path: Path
 ) -> None:
     """A silent no-op reads as a successful ingest and is how an empty index ships."""
-    mocker.patch("peerdex.index._index.index_doc", mocker.AsyncMock())
+    _stub(mocker)
 
     with pytest.raises(ValueError, match="no PDFs"):
-        await index_dir(tmp_path, company="acme")
+        await index_dir(tmp_path, company="acme", domain="corporate", year=2025)
+
+
+@pytest.mark.parametrize("bad", ["invoices", "corporat", ""])
+async def test_given_an_unconfigured_domain_when_indexed_then_it_fails(
+    mocker: MockerFixture, tmp_path: Path, bad: str
+) -> None:
+    """A domain names a table, so a typo would open an empty one and refuse every answer."""
+    _pdfs(tmp_path, "a")
+    _stub(mocker)
+
+    with pytest.raises(ValueError, match="unknown domain"):
+        await index_dir(tmp_path, company="acme", domain=bad, year=2025)
+
+
+@pytest.mark.parametrize("given", ["corporate", "CORPORATE", " Corporate "])
+def test_given_a_configured_domain_in_any_case_when_resolved_then_it_is_normalised(
+    given: str,
+) -> None:
+    """Callers type it by hand, so case and stray spaces must not decide the table."""
+    assert resolve_domain(given) == "corporate"

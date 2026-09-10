@@ -32,7 +32,7 @@ async def test_given_filters_when_retrieving_then_predicate_is_pushed_to_lancedb
     tbl, search = _table(mocker, [ROW])
 
     result = await PassageRetriever(
-        company="Acme", attributes={"year": 2025}, query_type="fts"
+        company="Acme", domain="corporate", attributes={"year": 2025}, query_type="fts"
     ).retrieve("scope 1")
 
     tbl.search.assert_called_once_with("scope 1", query_type="fts")
@@ -47,7 +47,9 @@ async def test_given_a_row_when_retrieving_then_id_page_and_score_survive(
     """A passage must stay traceable to its chunk and page, and keep its rank."""
     _table(mocker, [ROW])
 
-    result = await PassageRetriever(company="acme", query_type="fts").retrieve("scope 1")
+    result = await PassageRetriever(company="acme", domain="corporate", query_type="fts").retrieve(
+        "scope 1"
+    )
     node = result.nodes[0]
 
     assert node.node.node_id == "d1:c7"
@@ -60,7 +62,7 @@ async def test_given_no_matches_when_retrieving_then_it_refuses(mocker: MockerFi
     """Nothing found must be a refusal the caller can see, not an empty answer."""
     _table(mocker, [])
 
-    result = await PassageRetriever(company="acme", query_type="fts").retrieve(
+    result = await PassageRetriever(company="acme", domain="corporate", query_type="fts").retrieve(
         "nothing matches this"
     )
 

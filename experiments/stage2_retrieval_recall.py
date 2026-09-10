@@ -40,12 +40,14 @@ class Stage2Runner:
         self,
         company: str,
         year: int,
+        domain: str,
         extractor: str,
         stage_docs: Sequence[StageDocument],
         out_dir: Path,
     ) -> None:
         self._company: str = company
         self._year: int = year
+        self._domain: str = domain
         self._extractor: str = extractor
         self._stage_docs: list[StageDocument] = list(stage_docs)
         self._out_dir: Path = out_dir
@@ -55,6 +57,7 @@ class Stage2Runner:
         oracle: list[OracleValue] = load_oracle(self._company, self._year)
         retriever = PassageRetriever(
             company=self._company,
+            domain=self._domain,
             attributes={"year": self._year, "extractor": self._extractor},
         )
         outcomes: list[RetrievalOutcome] = [await self._outcome(retriever, v) for v in oracle]
@@ -107,6 +110,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--company", required=True)
     parser.add_argument("--year", required=True, type=int)
     parser.add_argument("--extractor", required=True)
+    parser.add_argument("--domain", default="corporate")
     parser.add_argument("--stage0", required=True, type=Path)
     parser.add_argument("--stage1", type=Path, default=None)
     parser.add_argument("--out-dir", type=Path, default=Path("results/funnel"))
@@ -119,6 +123,7 @@ def main() -> None:
     runner = Stage2Runner(
         args.company,
         args.year,
+        args.domain,
         args.extractor,
         [*_load_stage(args.stage0), *_load_stage(args.stage1)],
         args.out_dir,

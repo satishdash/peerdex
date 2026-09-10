@@ -32,7 +32,22 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption("--company", required=True, help="Company identifier to evaluate")
     parser.addoption("--year", required=True, type=int, help="Report year (e.g. 2025)")
     parser.addoption("--extractor", default=None, help="Restrict retrieval to one extractor")
+    parser.addoption("--domain", default="corporate", help="Document domain (one table each)")
     parser.addoption("--stage0", default=None, help="Path to a stage0_<extractor>.json")
+
+
+DOMAIN: str = "corporate"
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Fix the domain for the whole run.
+
+    The helpers below are module-level and shared by every stage, and one funnel run
+    only ever covers one domain, so it is read once rather than threaded through
+    every signature.
+    """
+    global DOMAIN
+    DOMAIN = str(config.getoption("--domain"))
 
 
 @pytest.fixture(scope="session")
@@ -154,7 +169,9 @@ async def run_pipeline(
     if cache_key in _cache:
         return _cache[cache_key]
 
-    result = await do_retrieve(q, company=company, filters=_filters(year, extractor))
+    result = await do_retrieve(
+        q, company=company, domain=DOMAIN, filters=_filters(year, extractor)
+    )
     nodes = result.nodes
     contexts = [n.node.get_content() for n in nodes]
     pages = [int(n.node.metadata.get("page_no", 0) or 0) for n in nodes]
@@ -183,7 +200,9 @@ async def run_retrieve_only(
     extractor: str | None = None,
 ) -> PipelineResult:
     """Run retrieval only (no synthesis)."""
-    result = await do_retrieve(q, company=company, filters=_filters(year, extractor))
+    result = await do_retrieve(
+        q, company=company, domain=DOMAIN, filters=_filters(year, extractor)
+    )
     nodes = result.nodes
     contexts = [n.node.get_content() for n in nodes]
     pages = [int(n.node.metadata.get("page_no", 0) or 0) for n in nodes]
@@ -206,7 +225,7 @@ async def run_agent(
     if cache_key in _agent_cache:
         return _agent_cache[cache_key]
     result: AgentAnswer = await agent_answer(
-        q, company=company, filters=_filters(year, extractor), kind=kind
+        q, company=company, domain=DOMAIN, filters=_filters(year, extractor), kind=kind
     )
     _agent_cache[cache_key] = result
     return result

@@ -3,7 +3,11 @@ env: dev
 storage:
   lancedb_uri: ${PEERDEX_LANCEDB_URI:-./lancedb}
   cache_uri: ${PEERDEX_CACHE_URI:-./cache}
-  table_name: peer_nodes
+
+# One table and one prompt set per document domain. A domain must be listed here
+# before it can be ingested or queried, so a typo cannot open an empty table.
+domains:
+  - corporate
 
 docling:
   artifacts_path: ${DOCLING_ARTIFACTS_PATH:-./cache/docling-models}

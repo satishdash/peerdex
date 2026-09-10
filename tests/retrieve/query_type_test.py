@@ -42,7 +42,9 @@ async def test_given_vector_mode_when_retrieving_then_the_embedded_query_is_sear
     tbl, search = _table(mocker)
     _embedding(mocker)
 
-    result = await PassageRetriever(company="acme", query_type="vector").retrieve("scope 1")
+    result = await PassageRetriever(
+        company="acme", domain="corporate", query_type="vector"
+    ).retrieve("scope 1")
 
     tbl.search.assert_called_once_with(VECTOR, query_type="vector")
     search.where.assert_called_once_with("metadata.company = 'acme'")
@@ -60,7 +62,9 @@ async def test_given_vector_mode_when_retrieving_then_candidates_are_refined(
     _, search = _table(mocker)
     _embedding(mocker)
 
-    await PassageRetriever(company="acme", query_type="vector").retrieve("scope 1")
+    await PassageRetriever(company="acme", domain="corporate", query_type="vector").retrieve(
+        "scope 1"
+    )
 
     search.refine_factor.assert_called_once_with(5)
 
@@ -71,7 +75,7 @@ async def test_given_full_text_mode_when_retrieving_then_it_is_not_refined(
     """Refinement is a vector-index concept and would be meaningless on full text."""
     _, search = _table(mocker)
 
-    await PassageRetriever(company="acme", query_type="fts").retrieve("scope 1")
+    await PassageRetriever(company="acme", domain="corporate", query_type="fts").retrieve("scope 1")
 
     search.refine_factor.assert_not_called()
 
@@ -83,7 +87,7 @@ async def test_given_full_text_mode_when_retrieving_then_nothing_is_embedded(
     tbl, _ = _table(mocker)
     embed = _embedding(mocker)
 
-    await PassageRetriever(company="acme", query_type="fts").retrieve("scope 1")
+    await PassageRetriever(company="acme", domain="corporate", query_type="fts").retrieve("scope 1")
 
     tbl.search.assert_called_once_with("scope 1", query_type="fts")
     embed.assert_not_called()
@@ -97,7 +101,9 @@ async def test_given_vector_mode_when_nothing_matches_then_the_reason_names_the_
     search.to_list.return_value = []
     _embedding(mocker)
 
-    result = await PassageRetriever(company="acme", query_type="vector").retrieve("nothing")
+    result = await PassageRetriever(
+        company="acme", domain="corporate", query_type="vector"
+    ).retrieve("nothing")
 
     assert result.refused is True
     assert result.reason == "no_vector_matches"
@@ -113,6 +119,6 @@ async def test_given_no_mode_when_retrieving_then_the_configured_default_is_used
     settings.return_value.retrieval.query_type = "fts"
     settings.return_value.retrieval.final_top_k = 25
 
-    await PassageRetriever(company="acme").retrieve("scope 1")
+    await PassageRetriever(company="acme", domain="corporate").retrieve("scope 1")
 
     tbl.search.assert_called_once_with("scope 1", query_type="fts")

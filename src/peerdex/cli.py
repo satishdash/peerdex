@@ -41,10 +41,10 @@ def _parse_kv[T](pairs: list[str] | None, values: ValueParser[T]) -> dict[str, T
 def index(
     pdf: Annotated[Path, typer.Argument(exists=True, readable=True)],
     company: Annotated[str, typer.Option("--company", "-c")],
-    year: Annotated[
-        int | None,
-        typer.Option("--year", "-y", help="reporting year; read from each sidecar when omitted"),
-    ] = None,
+    domain: Annotated[
+        str, typer.Option("--domain", "-d", help="document domain; one table and prompt set each")
+    ],
+    year: Annotated[int, typer.Option("--year", "-y", help="reporting year")],
     extractor: Annotated[
         str, typer.Option("--extractor", "-e", help="PDF extractor backend (docling, ...)")
     ] = "docling",
@@ -60,7 +60,14 @@ def index(
     ingest = index_dir if pdf.is_dir() else index_doc
     try:
         result = asyncio.run(
-            ingest(pdf, company=company, year=year, extractor=extractor, attributes=attributes)
+            ingest(
+                pdf,
+                company=company,
+                domain=domain,
+                year=year,
+                extractor=extractor,
+                attributes=attributes,
+            )
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -71,6 +78,9 @@ def index(
 def ask(
     q: Annotated[str, typer.Argument()],
     company: Annotated[str, typer.Option("--company", "-c")],
+    domain: Annotated[
+        str, typer.Option("--domain", "-d", help="document domain; one table and prompt set each")
+    ],
     filters: Annotated[
         list[str] | None,
         typer.Option(
@@ -84,7 +94,11 @@ def ask(
     """Agentic answer: plan -> retrieve -> answer -> reflect/retry -> emit."""
     asyncio.run(
         _run_one(
-            q, company=company, filters=_parse_kv(filters, ScalarSetValueParser()), top_k=top_k
+            q,
+            company=company,
+            domain=domain,
+            filters=_parse_kv(filters, ScalarSetValueParser()),
+            top_k=top_k,
         )
     )
 
@@ -93,13 +107,14 @@ async def _run_one(
     q: str,
     *,
     company: str,
+    domain: str,
     filters: dict[str, tuple[Scalar, ...]],
     top_k: int,
 ) -> None:
     """Run one question through the agent and pretty-print the result."""
     from peerdex.agent import answer as agent_answer
 
-    result = await agent_answer(q, company=company, filters=filters)
+    result = await agent_answer(q, company=company, domain=domain, filters=filters)
 
     at = Table(title="attempts")
     for col in ("#", "query", "passages"):
@@ -141,6 +156,9 @@ def _suites_path() -> Path:
 def suite(
     name: Annotated[str, typer.Argument(help="suite key in config/suites.yaml")],
     company: Annotated[str, typer.Option("--company", "-c")],
+    domain: Annotated[
+        str, typer.Option("--domain", "-d", help="document domain; one table and prompt set each")
+    ],
     filters: Annotated[
         list[str] | None,
         typer.Option(
@@ -177,7 +195,7 @@ def suite(
         for i, entry in enumerate(qs, 1):
             q = entry["q"] if isinstance(entry, dict) else entry
             console.print(Rule(f"[{i}/{len(qs)}] {q}"))
-            await _run_one(q, company=company, filters=parsed_filters, top_k=top_k)
+            await _run_one(q, company=company, domain=domain, filters=parsed_filters, top_k=top_k)
 
     asyncio.run(_run_all())
 

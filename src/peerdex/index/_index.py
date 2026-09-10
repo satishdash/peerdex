@@ -25,24 +25,18 @@ from peerdex.index._parse_cache import parse_cached
 from peerdex.parse import ExtractedDoc, Extractor, get_extractor
 from peerdex.shared.ids import doc_id as make_doc_id
 from peerdex.shared.logging import get_logger
-from peerdex.shared.metadata import (
-    CompositeAttributeSource,
-    DocumentMetadata,
-    ExplicitAttributeSource,
-    Scalar,
-    SidecarAttributeSource,
-    SidecarYearSource,
-)
-from peerdex.shared.settings import get_settings
+from peerdex.shared.metadata import DocumentMetadata, Scalar
+from peerdex.shared.settings import get_settings, resolve_domain
 
 log = get_logger("index")
 
 _SAFE_KEY: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
-def _persist_dir() -> str:
+def _persist_dir(domain: str) -> str:
+    """Where this domain's parent nodes live. One docstore per domain, like the table."""
     s = get_settings()
-    p = Path(s.storage.cache_uri) / "llama-index"
+    p = Path(s.storage.cache_uri) / "llama-index" / domain
     p.mkdir(parents=True, exist_ok=True)
     return str(p)
 
@@ -53,50 +47,49 @@ def embed_model() -> OpenAIEmbedding:
     return OpenAIEmbedding(model=s.embed.model, embed_batch_size=s.embed.batch_size)
 
 
-def vector_store() -> LanceDBVectorStore:
+def vector_store(domain: str) -> LanceDBVectorStore:
     s = get_settings()
-    log.info(f"opening lancedb at {s.storage.lancedb_uri} table={s.storage.table_name}")
+    log.info(f"opening lancedb at {s.storage.lancedb_uri} table={domain}")
     db = lancedb.connect(s.storage.lancedb_uri)
-    mode = "append" if s.storage.table_name in db.table_names() else "create"
-    return LanceDBVectorStore(
-        uri=s.storage.lancedb_uri,
-        table_name=s.storage.table_name,
-        mode=mode,
-    )
+    mode = "append" if domain in db.table_names() else "create"
+    return LanceDBVectorStore(uri=s.storage.lancedb_uri, table_name=domain, mode=mode)
 
 
-def storage_context() -> StorageContext:
-    persist = _persist_dir()
+def storage_context(domain: str) -> StorageContext:
+    persist = _persist_dir(domain)
     has_state = (Path(persist) / "docstore.json").exists()
     if has_state:
         return StorageContext.from_defaults(
-            vector_store=vector_store(),
+            vector_store=vector_store(domain),
             docstore=SimpleDocumentStore.from_persist_dir(persist),
             index_store=SimpleIndexStore.from_persist_dir(persist),
             persist_dir=persist,
         )
     return StorageContext.from_defaults(
-        vector_store=vector_store(),
+        vector_store=vector_store(domain),
         docstore=SimpleDocumentStore(),
         index_store=SimpleIndexStore(),
         persist_dir=persist,
     )
 
 
-def table() -> Any:
-    """The LanceDB table itself, for full-text search and row predicates."""
+def table(domain: str) -> Any:
+    """This domain's LanceDB table, for full-text search and row predicates.
+
+    A domain owns its table, so the domain name *is* the table name.
+    """
     s = get_settings()
     db = lancedb.connect(s.storage.lancedb_uri)
-    return db.open_table(s.storage.table_name)
+    return db.open_table(resolve_domain(domain))
 
 
-def ensure_fts_index() -> None:
+def _ensure_fts_index(domain: str) -> None:
     """Build the full-text index over the chunk text unless the table already has one.
 
     LanceDB keeps this inverted index (tantivy) beside the rows, so lexical search no
     longer needs the whole docstore loaded and re-stemmed in memory per process.
     """
-    tbl = table()
+    tbl = table(domain)
     if any(getattr(i, "index_type", "") == "FTS" for i in tbl.list_indices()):
         return
     tbl.create_fts_index("text", replace=True)
@@ -151,7 +144,7 @@ def _same_type(reported: str, configured: str) -> bool:
     return reported.replace("_", "").lower() == configured.replace("_", "").lower()
 
 
-def ensure_vector_index() -> None:
+def _ensure_vector_index(domain: str) -> None:
     """Build the approximate-nearest-neighbour index unless the table already has one.
 
     Without it every dense query scans every row. That is milliseconds on a few
@@ -162,7 +155,7 @@ def ensure_vector_index() -> None:
     an index of a different type is replaced, so switching costs a rebuild and
     never a re-embedding or a data migration.
     """
-    tbl = table()
+    tbl = table(domain)
     index_type: str = get_settings().index.vector_type
     existing: Any | None = _vector_index(tbl)
     if existing is not None and _same_type(str(existing.index_type), index_type):
@@ -184,6 +177,34 @@ def ensure_vector_index() -> None:
         f"[index] built {index_type} over vector rows={rows} "
         f"partitions={partitions} sub_vectors={sub_vectors}"
     )
+
+
+def _unindexed_rows(tbl: Any) -> int:
+    """The most rows any existing index does not yet cover."""
+    return max(
+        (int(getattr(index, "num_unindexed_rows", 0) or 0) for index in tbl.list_indices()),
+        default=0,
+    )
+
+
+def _refresh_indices(domain: str) -> None:
+    """Fold newly ingested rows into the indexes that already exist.
+
+    Embedding a document stores its vector; it does not put that row inside the
+    full-text or vector index. Both indexes are built once and skipped afterwards,
+    so without this every document after the first sits outside them. LanceDB
+    answers such rows by scanning, which keeps results correct while the cost grows
+    back to exactly what the index was built to avoid.
+
+    Incremental by design: ``optimize`` folds the new rows in, where rebuilding from
+    scratch costs minutes at production size and is what this replaced.
+    """
+    tbl = table(domain)
+    pending: int = _unindexed_rows(tbl)
+    if not pending:
+        return
+    tbl.optimize()
+    log.info(f"[index] folded {pending} new rows into the existing indexes")
 
 
 def _literal(value: Scalar) -> str:
@@ -222,13 +243,13 @@ def doc_predicate(doc_id: str) -> str:
     return f"metadata.source_doc_id = '{doc_id}'"
 
 
-def _delete_existing_doc(doc_id: str) -> None:
+def _delete_existing_doc(doc_id: str, domain: str) -> None:
     """Remove any prior rows for this doc_id from LanceDB so re-index is clean."""
     s = get_settings()
     try:
         db = lancedb.connect(s.storage.lancedb_uri)
-        if s.storage.table_name in db.table_names():
-            tbl = db.open_table(s.storage.table_name)
+        if domain in db.table_names():
+            tbl = db.open_table(domain)
             tbl.delete(doc_predicate(doc_id))
             log.info(f"[index] cleared prior rows for doc_id={doc_id}")
     except Exception as e:
@@ -246,45 +267,45 @@ def _document_metadata(
     extractor_name: str,
     attributes: Mapping[str, Scalar] | None,
 ) -> DocumentMetadata:
-    """Compose the document metadata (sidecar first, explicit wins)."""
-    source = CompositeAttributeSource(
-        [SidecarAttributeSource(), ExplicitAttributeSource(dict(attributes or {}))]
-    )
+    """Compose the document metadata. Attributes come from the caller, nowhere else."""
     return DocumentMetadata(
         company=company,
         year=int(year),
         source_uri=str(pdf_abs),
         extractor=extractor_name,
-        attributes=source.load(pdf_abs),
+        attributes=dict(attributes or {}),
     )
 
 
-def _resolved_year(pdf_abs: Path, year: int | None) -> int:
-    """The explicit year, else the one the document's sidecar states.
+def _index_table(domain: str) -> None:
+    """Make every stored row searchable, building what is missing and folding in the rest.
 
-    Explicit input wins, the same rule attributes follow. Neither is an error rather
-    than a default: a wrong year silently corrupts every year-filtered answer for
-    that document, which is worse than refusing to ingest it.
+    This is part of ingesting a document, not a step a caller can forget: embedding a
+    chunk stores its vector, it does not put that row inside an index. A row outside
+    the index is still answered, by scanning, which is the cost the index exists to
+    remove.
     """
-    if year is not None:
-        return int(year)
-    stated: int | None = SidecarYearSource().load(pdf_abs)
-    if stated is None:
-        raise ValueError(f"no year given and no sidecar year for {pdf_abs.name}")
-    return stated
+    _ensure_fts_index(domain)
+    _ensure_vector_index(domain)
+    _refresh_indices(domain)
 
 
-async def index_doc(
+async def _ingest_one(
     pdf_path: str | Path,
     *,
     company: str,
-    year: int | None = None,
-    extractor: str | None = None,
-    attributes: Mapping[str, Scalar] | None = None,
+    domain: str,
+    year: int,
+    extractor: str | None,
+    attributes: Mapping[str, Scalar] | None,
 ) -> dict[str, Any]:
-    """Extract -> chunk -> embed+store. Idempotent per source file and extractor."""
+    """Extract -> chunk -> embed+store one document, leaving the indexes to the caller.
+
+    Private because an ingest that stops here leaves rows outside the indexes. The
+    two public entry points both finish the job; a directory does it once at the end
+    rather than per document, because optimising compacts the whole table.
+    """
     pdf_abs: str = str(_resolve(pdf_path))
-    year = _resolved_year(Path(pdf_abs), year)
 
     extractor_inst: Extractor = get_extractor(extractor)
     ed: ExtractedDoc = await parse_cached(pdf_abs, extractor_inst)
@@ -294,7 +315,7 @@ async def index_doc(
     did = make_doc_id(company, pdf_abs, extractor_name)
 
     log.info(
-        f"[index] doc_id={did} company={doc_meta.company} year={doc_meta.year} "
+        f"[index] doc_id={did} domain={domain} company={doc_meta.company} "
         f"extractor={doc_meta.extractor} attributes={doc_meta.attributes} source={pdf_abs}"
     )
 
@@ -304,8 +325,8 @@ async def index_doc(
         metadata=doc_meta,
     )
 
-    _delete_existing_doc(did)
-    storage = storage_context()
+    _delete_existing_doc(did, domain)
+    storage = storage_context(domain)
     embed = embed_model()
 
     VectorStoreIndex(
@@ -315,9 +336,7 @@ async def index_doc(
         show_progress=True,
     )
     storage.docstore.add_documents(parent_nodes + child_nodes, allow_update=True)
-    storage.persist(persist_dir=_persist_dir())
-    ensure_fts_index()
-    ensure_vector_index()
+    storage.persist(persist_dir=_persist_dir(domain))
 
     log.info(f"[index] persisted {len(child_nodes)} nodes (doc_id={did})")
     return {
@@ -330,6 +349,33 @@ async def index_doc(
     }
 
 
+async def index_doc(
+    pdf_path: str | Path,
+    *,
+    company: str,
+    domain: str,
+    year: int,
+    extractor: str | None = None,
+    attributes: Mapping[str, Scalar] | None = None,
+) -> dict[str, Any]:
+    """Extract -> chunk -> embed+store -> searchable. Idempotent per file and extractor.
+
+    Returns with the document's rows inside both indexes. Indexing is not a separate
+    call, because one that can be forgotten will be.
+    """
+    resolved: str = resolve_domain(domain)
+    result: dict[str, Any] = await _ingest_one(
+        pdf_path,
+        company=company,
+        domain=resolved,
+        year=year,
+        extractor=extractor,
+        attributes=attributes,
+    )
+    await asyncio.to_thread(_index_table, resolved)
+    return result
+
+
 def _pdfs_in(dir_path: str | Path) -> tuple[Path, list[Path]]:
     """The resolved directory and the PDFs directly inside it, sorted."""
     directory: Path = Path(dir_path).expanduser().resolve()
@@ -340,16 +386,22 @@ async def index_dir(
     dir_path: str | Path,
     *,
     company: str,
-    year: int | None = None,
+    domain: str,
+    year: int,
     extractor: str | None = None,
     attributes: Mapping[str, Scalar] | None = None,
 ) -> list[dict[str, Any]]:
-    """Index every PDF in a directory, each with the year its own sidecar states.
+    """Index every PDF in a directory, all under the one year given.
 
-    Sorted so a run is reproducible and a partial one is resumable by eye. Sequential
-    for now: document-level concurrency is its own piece of work, with its own
-    measurement, because the largest document dominates the wall clock.
+    Returns with every document searchable. Sorted so a run is reproducible and a
+    partial one is resumable by eye. Sequential for now: document-level concurrency
+    is its own piece of work, with its own measurement, because the largest document
+    dominates the wall clock.
+
+    The indexes are brought up to date once at the end rather than per document,
+    because doing so compacts the whole table.
     """
+    resolved: str = resolve_domain(domain)
     directory: Path
     pdfs: list[Path]
     directory, pdfs = await asyncio.to_thread(_pdfs_in, dir_path)
@@ -360,22 +412,24 @@ async def index_dir(
     results: list[dict[str, Any]] = []
     for pdf in pdfs:
         results.append(
-            await index_doc(
+            await _ingest_one(
                 pdf,
                 company=company,
-                year=_resolved_year(pdf, year),
+                domain=resolved,
+                year=year,
                 extractor=extractor,
                 attributes=attributes,
             )
         )
+    await asyncio.to_thread(_index_table, resolved)
     return results
 
 
-def load_index() -> VectorStoreIndex:
-    """Re-open the persisted index for queries."""
-    storage = storage_context()
+def load_index(domain: str) -> VectorStoreIndex:
+    """Re-open one domain's persisted index for queries."""
+    resolved: str = resolve_domain(domain)
     return VectorStoreIndex.from_vector_store(
-        vector_store=vector_store(),
-        storage_context=storage,
+        vector_store=vector_store(resolved),
+        storage_context=storage_context(resolved),
         embed_model=embed_model(),
     )

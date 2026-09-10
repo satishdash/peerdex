@@ -35,7 +35,6 @@ def _expand(value: Any) -> Any:
 class StorageCfg(BaseModel):
     lancedb_uri: str
     cache_uri: str
-    table_name: str = "peer_nodes"
 
 
 class DoclingCfg(BaseModel):
@@ -121,7 +120,15 @@ class LoggingCfg(BaseModel):
 
 
 class Settings(BaseModel):
+    """Everything configurable. ``domains`` is the set of document domains served.
+
+    A domain owns one LanceDB table and one prompt set, so it must be declared here
+    before it can be ingested or queried. Without that check a mistyped domain would
+    quietly open an empty table and every answer would be a refusal.
+    """
+
     env: str = "dev"
+    domains: list[str] = Field(default_factory=lambda: ["corporate"])
     storage: StorageCfg
     docling: DoclingCfg
     chunker: ChunkerCfg
@@ -167,3 +174,16 @@ def get_settings() -> Settings:
     expanded = _expand(raw)
     coerced = _coerce_numerics(expanded)
     return Settings(**coerced)
+
+
+def resolve_domain(domain: str) -> str:
+    """The domain, normalised, once it is known to be one this deployment serves.
+
+    Refusing an unknown domain is the point: it names one LanceDB table, so a typo
+    would otherwise create or open an empty one and turn every answer into a refusal.
+    """
+    normalised: str = domain.strip().lower()
+    known: list[str] = get_settings().domains
+    if normalised not in known:
+        raise ValueError(f"unknown domain {domain!r}; configured domains are {known}")
+    return normalised

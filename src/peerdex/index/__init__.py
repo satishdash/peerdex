@@ -3,8 +3,6 @@
 from peerdex.index._index import (
     attribute_predicate,
     doc_predicate,
-    ensure_fts_index,
-    ensure_vector_index,
     index_dir,
     index_doc,
     load_index,
@@ -15,8 +13,6 @@ from peerdex.index._parse_cache import parse_cached
 __all__ = [
     "attribute_predicate",
     "doc_predicate",
-    "ensure_fts_index",
-    "ensure_vector_index",
     "index_dir",
     "index_doc",
     "load_index",

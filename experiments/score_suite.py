@@ -61,12 +61,14 @@ class SuiteScorer:
         self,
         company: str,
         year: int,
+        domain: str,
         extractor: str,
         scorer: AnswerScorer,
         limit: int | None = None,
     ) -> None:
         self._company: str = company
         self._year: int = year
+        self._domain: str = domain
         self._extractor: str = extractor
         self._scorer: AnswerScorer = scorer
         self._limit: int | None = limit
@@ -88,6 +90,7 @@ class SuiteScorer:
         result: AgentAnswer = await agent_answer(
             case.q,
             company=self._company,
+            domain=self._domain,
             filters={"year": self._year, "extractor": self._extractor},
             kind=kind,
         )
@@ -148,6 +151,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--company", required=True)
     parser.add_argument("--year", required=True, type=int)
     parser.add_argument("--extractor", required=True)
+    parser.add_argument("--domain", default="corporate")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--out", type=Path, default=None)
     return parser.parse_args()
@@ -156,7 +160,9 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     """Run the scorer end to end and write the stage 3 JSON report."""
     args: argparse.Namespace = _parse_args()
-    suite_scorer = SuiteScorer(args.company, args.year, args.extractor, AnswerScorer(), args.limit)
+    suite_scorer = SuiteScorer(
+        args.company, args.year, args.domain, args.extractor, AnswerScorer(), args.limit
+    )
     records: list[QuestionRecord] = asyncio.run(suite_scorer.run())
     report = ScoreReport(records)
     payload: dict[str, Any] = report.to_json(

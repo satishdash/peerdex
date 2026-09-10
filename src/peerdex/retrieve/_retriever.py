@@ -49,7 +49,7 @@ from peerdex.index._index import embed_model
 from peerdex.shared.logging import get_logger
 from peerdex.shared.metadata import AttributeFilter, Scalars
 from peerdex.shared.resilience import light_decorator
-from peerdex.shared.settings import get_settings
+from peerdex.shared.settings import get_settings, resolve_domain
 
 log = get_logger("retrieve")
 
@@ -103,10 +103,12 @@ class PassageRetriever:
         self,
         *,
         company: str,
+        domain: str,
         attributes: Mapping[str, Scalars] | None = None,
         query_type: str | None = None,
     ) -> None:
         cfg = get_settings().retrieval
+        self._domain: str = resolve_domain(domain)
         self._top_k: int = cfg.final_top_k
         self._query_type: str = query_type or cfg.query_type
         self._refine_factor: int = cfg.vector_refine_factor
@@ -116,7 +118,7 @@ class PassageRetriever:
     @light_decorator()
     async def retrieve(self, query: str) -> RetrievalResult:
         """Search the filtered slice, best ``final_top_k`` passages."""
-        search = table().search(await self._target(query), query_type=self._query_type)
+        search = table(self._domain).search(await self._target(query), query_type=self._query_type)
         if self._predicate:
             search = search.where(self._predicate)
         if self._query_type == "vector":
@@ -142,7 +144,10 @@ async def retrieve(
     query: str,
     *,
     company: str,
+    domain: str,
     filters: Mapping[str, Scalars] | None = None,
 ) -> RetrievalResult:
     """Module-level helper: one-shot retrieval with optional attribute filters."""
-    return await PassageRetriever(company=company, attributes=filters).retrieve(query)
+    return await PassageRetriever(company=company, domain=domain, attributes=filters).retrieve(
+        query
+    )
