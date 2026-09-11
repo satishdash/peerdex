@@ -14,7 +14,7 @@ and cannot drift out of date unnoticed.
             cached on                                              │
           bytes+extractor                                          ▼
                                                 LanceDB rows + FTS + vector index
-                                                docstore JSON
+                                                `<domain>_parents` rows
  ─────────────────────────────────────────────────────────────────────────────
  ASK  (once per question)
  ┌──────────┐   ┌──────┐   ┌──────────┐   ┌─────────┐   ┌────────┐
@@ -30,84 +30,55 @@ and **one** LLM call in the common case.
 
 ## Stage 1 — parse: a PDF becomes typed blocks
 
-A PDF is a bag of positioned glyphs; it has no idea what a table is. Parsing is
-what recovers the structure.
-
 ```
   page image / glyph stream
             │
-            ├─ layout model      → what is a heading, a paragraph, a figure
-            ├─ table model       → cell grid: which text is in which row/column
-            └─ reading order     → the sequence a human would read in
-            │
+            ├─ layout model      → heading, paragraph, figure
+            ├─ table model       → cell grid
+            └─ reading order     → human reading sequence
             ▼
-   ExtractedDoc = [ Block, Block, ... ] + [ PageInfo, ... ]
+   ExtractedDoc = [ Block, ... ] + [ PageInfo, ... ]
 ```
 
-Five block kinds, and nothing else. Deliberately the smallest set that covers
-business documents:
+| block | carries |
+| --- | --- |
+| `HeadingBlock` | text, level, page |
+| `ParagraphBlock` | text, page |
+| `TableBlock` | `headers`, `rows`, `caption`, page |
+| `ListBlock` | items, ordered flag, page |
+| `PictureBlock` | PIL image, bbox area, page |
 
-| block | carries | why it exists |
-| --- | --- | --- |
-| `HeadingBlock` | text, level, page | gives every later block its section context |
-| `ParagraphBlock` | text, page | prose answers, definitions, methodology notes |
-| `TableBlock` | `headers`, `rows` (cell strings), `caption`, page | where the numbers live |
-| `ListBlock` | items, ordered flag, page | bulleted disclosures |
-| `PictureBlock` | the rendered **PIL image**, bbox area, page | charts, whose values exist only as pixels |
-
-Every block also carries `page_no` and `heading_path` — the chain of ancestor
-headings. That is what lets an answer cite a page, and lets a chunk know which
-section it came from without re-walking the document.
-
-**Four extractors implement the same contract** (`docling` by default, plus
-`liteparse`, `kreuzberg`, `odl`), so they are swappable and directly comparable.
-Downstream code never sees extractor internals.
-
-**Parsing is cached** on the file's bytes plus the extractor's name and version.
-Measured cold 39.82s versus warm 0.01s on a 34-page document. So changing the
-chunker means re-indexing, never re-parsing. A version bump misses the cache
-cleanly; a damaged entry is treated as a miss rather than an error.
+- Every block carries `page_no` and `heading_path` (ancestor headings): page
+  citations and section context.
+- Four extractors, one contract: `docling` (default), `liteparse`, `kreuzberg`, `odl`.
+- Parse is cached on file bytes + extractor name and version. Cold 39.82 s, warm
+  0.01 s on 34 pages. A damaged entry is a miss, not an error.
 
 ## Stage 2 — chunk: blocks become retrievable units
-
-A whole 200-page document is useless as a retrieval unit, and so is a lone
-number. Chunking picks the size that can actually answer a question.
 
 ```
   a section with a table
             │
-            ├──────────────► PARENT node: the whole table or section
-            │                (full context, too big to rank well)
-            │
-            └──────────────► CHILD nodes: row groups, ~256 tokens each
-                             (precise, what search actually matches)
+            ├──► PARENT: whole table or section, ≤1,024 tokens,
+            │            stored in `<domain>_parents`, not searched
+            └──► CHILD:  row groups or sentence splits, 256 tokens, 32 overlap,
+                         embedded and searched
 
-   parent ◄──── CHILD relationship ────► child
-   parent ◄──── PARENT relationship ──── child        (linked both ways)
+   parent ◄──── linked both ways ────► child
 ```
 
-**The critical detail: every table child repeats the header row and the
-caption.** Without it a row group reads `| Scope 1 | 62,587 |` — no unit, no
-year, unanswerable. With it:
+Every table child repeats caption and header row, so label, unit and period
+survive in a chunk small enough to rank:
 
 ```
   |        | Unit        | 2025   | 2024    | 2023    |
   | Scope 1| Tonnes CO₂e | 62,587 | 125,386 | 180,898 |
 ```
 
-Row label, unit and period all survive in a chunk small enough to rank. This is
-the single most important property of the chunker.
-
-Ids are `<doc_id>:p<n>` for parents and `<doc_id>:c<n>` for children. The kind
-letter is required, not optional — parents and children are numbered
-independently, so without it a child could be handed its own id and become its
-own parent.
+Ids: `<doc_id>:p<n>` for parents, `<doc_id>:c<n>` for children. They are
+numbered independently, so the kind letter is required.
 
 ## Stage 3 — describe figures: pixels become text
-
-A chart's values are not in the PDF's text at all. A vision model reads the
-image and writes what it shows, and that description becomes searchable like any
-other text.
 
 ```
   PictureBlock.pil_image ──► vision model ──► "Revenue by region. North America
@@ -117,8 +88,8 @@ other text.
                                             stored as a chunk, cached by image
 ```
 
-Small and edge-of-page images are skipped — area and header/footer band
-thresholds — because those are logos and rules, not data.
+Small and edge-of-page images are skipped (area and header/footer band
+thresholds): logos and rules, not data.
 
 ## Stage 4 — embed and store
 
@@ -127,24 +98,20 @@ thresholds — because those are logos and rules, not data.
                                                 │
         ┌───────────────────────────────────────┴──────────────┐
         ▼                                                      ▼
-  LanceDB table `<domain>`                            docstore JSON
-  one row per CHILD chunk:                            parents + children
-    id, text, vector, metadata struct                 with relationships
+  LanceDB table `<domain>`                         LanceDB table `<domain>_parents`
+  one row per CHILD chunk:                         one row per PARENT chunk:
+    id, text, vector, metadata struct                id, text, metadata struct
         │
         ├─► FTS index    (tantivy inverted index over `text`)
         └─► vector index (IVF_PQ over `vector`)
 ```
 
-Both indexes are built after every ingest and are no-ops if already present.
-The vector index's parameters are **derived from the row count** — partitions
-near √rows, sub-vectors dividing the embedding width — because a pair tuned on
-one corpus is wrong for the next.
-
-`metadata` is a struct, so filters push down into the database as SQL:
-`metadata.company = '…' AND metadata.year = 2025`.
-
-The table holds **children only**. Parents live in the docstore and are not on
-the read path.
+- Both indexes are built after every ingest; no-ops if present. Vector index
+  parameters derive from row count: partitions near √rows, sub-vectors dividing
+  the embedding width.
+- `metadata` is a struct, so filters push down as SQL:
+  `metadata.company = '…' AND metadata.year = 2025`.
+- Only children are searched. Parents are written per document and not yet read.
 
 ## Stage 5 — retrieve: narrow, then rank
 
@@ -178,73 +145,50 @@ and OR within a key.
 | dense, IVF_PQ index, no refinement | 17/28 |
 | **dense, IVF_PQ index, `refine_factor=5`** | **19/28** |
 
-Dense finds everything full text finds, plus two more. The index without
-refinement gives that gain straight back — see the first boulder below.
-
 ## Stage 6 — extract: passages become one figure
 
 ```
-  question + qualifiers (period, scope, unit)
-  + passages
+  question + qualifiers (period, scope, unit) + passages
             │
             ▼
       one LLM call
             │
             ▼
-   { "value": "62,587", "unit": "Tonnes CO₂e",
-     "label": "Scope 1", "column": "2025" }
+   { "value": "62,587", "unit": "Tonnes CO₂e", "label": "Scope 1", "column": "2025" }
             │
-            ├─ label empty?  ──► refuse. A number nobody can attribute to a
-            │                    printed row is how a neighbouring figure ends
-            │                    up being returned as the answer.
-            ├─ column states another period? ──► refuse. See below.
-            └─ value not a bare number? ──► refuse
+            ├─ label empty?                   ──► refuse
+            ├─ column states another period?  ──► refuse
+            └─ value not a bare number?       ──► refuse
 ```
 
-`label` is the row label copied as printed. Requiring it is what stopped one
-energy figure being returned for coal, natural gas and nuclear alike, in a
-document that breaks out none of them.
-
-`column` is the same evidence along the other axis, and it is needed because a
-correct row label still leaves one figure per period to choose from:
+`column` matters because a correct row label still leaves one figure per period:
 
 ```
   |        | Baseline 2015 | 2024    | 2025   |   ← asked for 2025
   | Scope 1|   298,498     | 125,386 | 62,587 |
-              └─ answered this, under the correct label `Scope 1`
 ```
 
-The asked-for period arrives from the `year` filter, not from the question —
-`Gross global Scope 1 emissions` contains no year, so reading the period from
-the question text alone left this unfixable. Only a column that *states* a
-period is judged: a `Female` column holding a board count states none, and
-demanding a period of it refused two correct answers when measured.
+- The asked-for period comes from the `year` filter, not the question text.
+- Only a column that states a period is judged. A `Female` column holding a
+  board count states none; demanding one refused two correct answers.
+- Quantitative: the value alone or an empty string. Qualitative: a synthesis
+  step returning prose. Both carry citations.
 
-**A quantitative answer is the value alone or an empty string** — never a hedge,
-never prose around a number. Qualitative questions go to a synthesis step
-instead and return prose. Both carry citations.
-
-**One exception to "never compute": a question that spells the arithmetic out.**
+A question that spells the arithmetic out is derived; nothing else is:
 
 ```
   "Total GHG emissions (Scope 1 + Scope 2 + Scope 3)"
             │
             ▼
-  operands named by the question, each extracted from the passages
-  already retrieved   ──►  62,587 t   108,000 t   6,100,000 t
-            │                    │
-            │        typed: unit + scale, converted before adding
+  operands extracted from the retrieved passages ──► 62,587 t  108,000 t  6,100,000 t
+            │   typed unit + scale, converted before adding
             ▼
-      6,270,587 t          any operand missing, or two dimensions
-                           that do not combine ──► derive nothing,
-                           fall back to the printed figure
+      6,270,587 t      any operand missing, or dimensions that do not combine
+                       ──► derive nothing, fall back to the printed figure
 ```
 
-The question is the only mandate to compute; nothing is derived from a question
-that merely sounds derived ("water intensity ratio per revenue" names no
-operands). Magnitudes are `Decimal`, so a sum does not depend on the order it
-was added in. Units live in `peerdex.quantity`, which also converts a figure to
-the unit a question states.
+Magnitudes are `Decimal`. Units live in `peerdex.quantity`, which also converts
+the result to the unit the question states.
 
 ## Stage 7 — reflect: one bounded retry
 
@@ -257,8 +201,7 @@ the unit a question states.
             └─ still nothing after 2 attempts ──► refuse, with the reason
 ```
 
-This is a deterministic retry, **not** a framework agent: no tool selection, no
-scratchpad, no model deciding the next action. Every attempt is recorded on the
+Deterministic retry, not a framework agent. Every attempt is recorded on the
 answer.
 
 ## How it is scored (evaluation only, never the serving path)
@@ -294,104 +237,3 @@ No model name is hardcoded anywhere.
 | passages returned | `retrieval.final_top_k` |
 | search mode | `retrieval.query_type` |
 | vector index type | `index.vector_type` |
-
-## What was removed, and why
-
-Retrieval was deliberately stripped to a floor and each component measured
-before being allowed back. Removed: dense (embedding) search, reciprocal-rank
-fusion, an in-memory BM25 index, HyDE, multi-query expansion, an LLM reranker,
-and `AutoMergingRetriever`.
-
-Two were removed for cause rather than simplicity: `AutoMergingRetriever` looped
-forever on one query and replaced precise row groups with whole tables, and the
-LLM reranker plus query expansion made scores non-deterministic — 16, then 12,
-then 13 on identical input.
-
-The order for adding anything back is in `backlog.md`.
-
-## Rocks and boulders
-
-The things that will bite someone reading this code for the first time. Every
-one was found the hard way.
-
-**Full text and dense return opposite polarities.** Full text gives `_score`
-(higher is better); dense gives `_distance` (lower is better). Reading only
-`_score` scores every dense hit zero and leaves citations in arbitrary order —
-silently, with no error. Both are normalised in one place, `_relevance`.
-
-**Product quantisation silently costs recall.** IVF_PQ compresses each 1536-dim
-vector from 6,144 bytes to 96 — 64× — which is what makes a large corpus fit,
-and it loses the fine distinctions. Measured: 19/28 exact, 17/28 indexed.
-`refine_factor` re-ranks the top candidates against the *uncompressed* vectors
-and restores 19/28. **Never run IVF_PQ without it.**
-
-**`nprobes` was not the knob.** 20 versus 68 partitions probed made no
-difference, which proves the loss was compression and not partition pruning. It
-becomes the recall knob at a size where partitions number in the thousands.
-
-**The table holds children only** — zero parents in 4,739 rows. Coarse-to-fine
-hierarchical search is therefore impossible without changing what is stored.
-
-**LanceDB reports an index type in its own spelling.** The setting says
-`IVF_PQ`; `list_indices()` says `IvfPq`. Comparing them verbatim is always
-false, so the "already indexed?" guard never fired and every ingest silently
-rebuilt the whole vector index — 2.6s on 4,739 rows, and tens of minutes at
-millions. Compare with underscores stripped and case folded, and select the
-index by its *column*, or the full-text index over `text` gets mistaken for it.
-
-**Switching index type is a rebuild, not a migration.** The index is derived
-from the stored `vector` column, so changing `index.vector_type` costs one
-rebuild and touches no rows, no schema and no embeddings. Verified live by
-switching to `IVF_HNSW_SQ` and back, after which the repeat call is a 4.8ms
-no-op. Whether queries are served *during* a rebuild is untested.
-
-**`create_index` takes the column from a positional argument named `metric`.**
-The modern-looking `create_index(config=FTS(), vector_column_name="text")` fails
-with `Field path 'l2' not found`, which explains nothing. Pass `metric=`,
-`vector_column_name=` and `index_type=` explicitly.
-
-**The parse cache must be pickle, not JSON.** `PictureBlock` carries a live PIL
-image that the figure stage consumes; a JSON round-trip loses it.
-
-**Cache IO resolves through one seam at call time.** `from peerdex.shared import
-cache` then `cache.fs_and_root()`, never `from …cache import fs_and_root` — a
-direct import binds at import time, defeats patching, and will write to the real
-filesystem from inside a test.
-
-**Stage 0's recall number over-reports.** It compares with 1% tolerance *and*
-power-of-ten freedom across every block of every document, so it once counted a
-goodwill figure as waste tonnage. Read it as "a number of that magnitude exists
-somewhere", not "the value is findable".
-
-**An extraction with no row label is a refusal.** Otherwise a plausible
-neighbouring figure gets returned — one energy number was answered for coal,
-natural gas and nuclear alike in a document that breaks out none of them.
-
-**The asked-for period is a filter, not words in the question.** `plan.period`
-comes from a regex over the question text, and most questions state no year, so
-anything keyed on it silently does nothing. The period is taken from the `year`
-filter, and a filter naming several years yields none — there is then no single
-period to check a column against.
-
-**A guard that judges too much costs accuracy.** Requiring the extracted column
-to match the period looks right until a column is not a period at all: two
-correct board-member counts under a `Female` header were refused. Only columns
-that state a period are judged. Measured both ways — 10 matches against 12.
-
-**Scoring must read the unit.** `58,739` reported in `$m` looks a millionfold
-wrong against `58739000000` until the unit is consulted.
-
-**A unit that names a denominator must not resolve.** "tonnes per employee"
-reads as tonnes if only the first word is looked up, silently retyping an
-intensity as a total. `UnitRegistry` refuses any text containing `per` or `/`.
-The same care applies to lowercase collisions: `mt` is read as a megatonne and
-`ml` as a megalitre, the way reports use them.
-
-**Typed units bought no accuracy on the first corpus.** Of 16 wrong-or-missed
-answers, none was off by a power of ten or any unit factor. The unit table is
-there as the seam a second document domain needs; only the derivation step moved
-the number, by one question.
-
-**Repeat runs of an LLM stage are not independent.** Completions are cached, so
-running stage 3 three times returns identical answers by construction. The
-three-run rule earns its keep on uncached comparisons like the retrieval modes.

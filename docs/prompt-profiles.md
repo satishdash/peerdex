@@ -1,67 +1,35 @@
 # Pluggable prompt profiles
 
-**Goal.** Any PDF can be ingested and answered well — an electricity bill, an
-invoice, a carbon disclosure — not only corporate reports. The machinery stays
-domain-free; only the prompt text is domain-specific, selected by an option.
+Goal: any PDF answers well with the same code. Only prompt text is
+domain-specific, chosen by an option. Not built yet; priority in `backlog.md`.
 
-**Already true.** Parse, chunk, index, retrieval, synthesis and the figure
-description step carry no domain knowledge — they interpolate strings. Nothing
-branches on document type, so a non-report PDF indexes correctly today.
+## Today
 
-**The gap.** All domain knowledge lives in one `DocumentPrompts` value object,
-instantiated once as a module-level `PROMPTS` and imported directly by its
-consumers. There is no seam to swap it.
+Parse, chunk, index, retrieval and synthesis carry no domain knowledge. All
+prompt text sits in one `DocumentPrompts` value, `PROMPTS`, imported directly.
 
-## Consumers
-
-Stripping retrieval to a single full-text step removed three of the six
-consumers this design was originally written against. What remains:
-
-| consumer | site | fields used |
+| consumer | site | fields |
 | --- | --- | --- |
-| synthesis | `synthesize/_synth.py:124` | `label`, `synthesis_rules` |
-| figure description | `vlm/_describer.py:117` | `ingest_vlm_prompt`, `prompt_version` |
-| chunk metadata | `chunk/_chunker.py:226` | `prompt_version` |
+| synthesis | `synthesize/_synth.py` | `label`, `synthesis_rules` |
+| figure description | `vlm/_describer.py` | `ingest_vlm_prompt`, `prompt_version` |
+| chunk metadata | `chunk/_chunker.py` | `prompt_version` |
 
-Three fields now have no reader at all — `domain_brief`, `expansion_vocab` and
-`rerank_criteria` — because query generation, HyDE and the LLM reranker were
-removed. They come back only if those components do.
+Unread fields: `domain_brief`, `expansion_vocab`, `rerank_criteria`. They return
+only with query expansion or an LLM reranker.
 
-This shrinks the work: there are three injection points, not six, and two of
-them only need `prompt_version`.
+## Two lifecycles
 
-## The constraint that shapes the design
-
-The profile splits across two lifecycles.
-
-| lifecycle | fields | chosen when |
+| when | fields | chosen |
 | --- | --- | --- |
-| query-time | `label`, `synthesis_rules` | per question |
-| index-time | `ingest_vlm_prompt`, `prompt_version` | at ingestion, permanently |
-
-The figure-description prompt cannot change at query time — the figure was
-already described. `prompt_version` is persisted on every chunk, so the profile
-that produced a chunk is recoverable and filterable. Reuse it rather than adding
-new provenance.
+| query time | `label`, `synthesis_rules` | per question |
+| index time | `ingest_vlm_prompt`, `prompt_version` | at ingest; `prompt_version` is stored on every chunk |
 
 ## Build
 
-1. A registry of named `DocumentPrompts` profiles, `corporate report` staying
-   the default.
-2. Inject the resolved profile into the three consumers instead of importing
-   `PROMPTS` directly.
-3. `-p / --prompt-type` on `index` for the ingestion fields, and on `ask` and
-   `suite` for the query fields.
-4. Reject a query-time profile that does not match any indexed `prompt_version`,
-   rather than answering from mismatched chunks.
+1. Registry of named profiles; `corporate report` stays default.
+2. Inject the profile into the three consumers.
+3. `-p/--prompt-type` on `index` for ingest fields, on `ask` and `suite` for query fields.
+4. Refuse a query profile that matches no indexed `prompt_version`.
 
-**Done when** a non-report PDF indexed under its own profile answers correctly,
-the corporate-report path is unchanged, and `make test` and `make lint` pass.
-
-## Where this sits
-
-This is the seam that makes the system generic, and it pairs with the fact
-schema in `fact-layer.md`: a profile says *what facts to want*, the fact layer
-says *how they are stored*. Priority against everything else is in
-`backlog.md` — it is not in the current plan's first steps, because raising
-answer accuracy on documents we already handle comes first.
+Done when a non-report PDF under its own profile answers correctly and the
+report path is unchanged.
