@@ -1,6 +1,6 @@
 """Index layer: ExtractedDoc -> persisted LlamaIndex VectorStoreIndex.
 
-Storage is LanceDB (vector rows) plus a persisted docstore/index_store.
+Storage is LanceDB: child rows in the domain's table, parents in its parent table.
 doc_id is content-addressed, so re-indexing a file first deletes its prior
 LanceDB rows and replaces them cleanly.
 """
@@ -14,13 +14,12 @@ from pathlib import Path
 from typing import Any, Final
 
 from llama_index.core import StorageContext, VectorStoreIndex
-from llama_index.core.storage.docstore import SimpleDocumentStore
-from llama_index.core.storage.index_store import SimpleIndexStore
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.vector_stores.lancedb import LanceDBVectorStore
 
 import lancedb
 from peerdex.chunk import HierarchicalChunker
+from peerdex.index._parents import ParentStore
 from peerdex.index._parse_cache import parse_cached
 from peerdex.parse import ExtractedDoc, Extractor, get_extractor
 from peerdex.shared.ids import doc_id as make_doc_id
@@ -31,14 +30,6 @@ from peerdex.shared.settings import get_settings, resolve_domain
 log = get_logger("index")
 
 _SAFE_KEY: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-
-
-def _persist_dir(domain: str) -> str:
-    """Where this domain's parent nodes live. One docstore per domain, like the table."""
-    s = get_settings()
-    p = Path(s.storage.cache_uri) / "llama-index" / domain
-    p.mkdir(parents=True, exist_ok=True)
-    return str(p)
 
 
 @lru_cache(maxsize=1)
@@ -56,21 +47,14 @@ def vector_store(domain: str) -> LanceDBVectorStore:
 
 
 def storage_context(domain: str) -> StorageContext:
-    persist = _persist_dir(domain)
-    has_state = (Path(persist) / "docstore.json").exists()
-    if has_state:
-        return StorageContext.from_defaults(
-            vector_store=vector_store(domain),
-            docstore=SimpleDocumentStore.from_persist_dir(persist),
-            index_store=SimpleIndexStore.from_persist_dir(persist),
-            persist_dir=persist,
-        )
-    return StorageContext.from_defaults(
-        vector_store=vector_store(domain),
-        docstore=SimpleDocumentStore(),
-        index_store=SimpleIndexStore(),
-        persist_dir=persist,
-    )
+    """Somewhere to put the child rows, and nothing that is written to disk.
+
+    The docstore LlamaIndex creates here is never persisted or read back: the rows it
+    would hold are already in the table, and parents go to ``ParentStore``. Persisting
+    it meant loading and rewriting one JSON file per ingest, 33MB at 9,160 rows, so the
+    cost of adding a document grew with the corpus instead of with the document.
+    """
+    return StorageContext.from_defaults(vector_store=vector_store(domain))
 
 
 def table(domain: str) -> Any:
@@ -335,10 +319,9 @@ async def _ingest_one(
         embed_model=embed,
         show_progress=True,
     )
-    storage.docstore.add_documents(parent_nodes + child_nodes, allow_update=True)
-    storage.persist(persist_dir=_persist_dir(domain))
+    parents: int = ParentStore(domain).put(did, parent_nodes)
 
-    log.info(f"[index] persisted {len(child_nodes)} nodes (doc_id={did})")
+    log.info(f"[index] persisted {len(child_nodes)} nodes, {parents} parents (doc_id={did})")
     return {
         "doc_id": did,
         "nodes": len(child_nodes),
@@ -423,13 +406,3 @@ async def index_dir(
         )
     await asyncio.to_thread(_index_table, resolved)
     return results
-
-
-def load_index(domain: str) -> VectorStoreIndex:
-    """Re-open one domain's persisted index for queries."""
-    resolved: str = resolve_domain(domain)
-    return VectorStoreIndex.from_vector_store(
-        vector_store=vector_store(resolved),
-        storage_context=storage_context(resolved),
-        embed_model=embed_model(),
-    )

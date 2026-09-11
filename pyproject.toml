@@ -15,7 +15,7 @@ dependencies = [
     "opendataloader-pdf[hybrid]>=2.3.0",
     "openai>=2.36",
     # ---------- Vector store ----------
-    "lancedb>=0.30",
+    "lancedb>=0.38,<0.39",
     "pyarrow>=24",
     "tantivy>=0.25",
     # ---------- RAG framework ----------

@@ -38,17 +38,29 @@ numbers so earlier references stay valid.
 
 | step | work | bucket |
 | --- | --- | --- |
-| 6 | Replace `final_top_k` with a score- or coverage-based cutoff | — |
-| 7 | Second corpus — ingested; scoring blocked on the reference values | — |
 | 8 | Speed and scale — docstore off the single JSON, then configurable document concurrency | — |
 | 9 | Agent framework — a real LlamaIndex agent instead of the hand-written retry | — |
 
 Each step ends with a measured number over three runs, never one.
 
-**Note on step 7**: it is the only check against fitting one report, and after
-step 3's audit it is also the only way left to raise the accuracy number
-honestly. It is also where step 5's unit table gets its first real test: only
-four of its dimensions are exercised by this corpus.
+**Note on step 6**, so the next attempt starts from evidence rather than
+repeating this. An adaptive cutoff was measured over four rule families
+(relevance-relative, distance-relative, largest-gap, coverage) and twenty
+parameterisations, replayed on one recorded set of rankings so no rule got a
+luckier query. Fixed `k` dominated the whole frontier: at recall 19/28 it needed
+25 passages against 38.8 for the best adaptive rule. The adaptive rules also
+each need a corpus-calibrated constant, so they are *more* corpus-tuned than the
+budget they were meant to replace.
+
+Ranking is the lever instead. 12% of the top-ten slots held passages printing no
+number at all, which cannot answer a quantitative question. A throwaway
+number-density reorder of the same candidates moved the answer up for 15 of 21
+reachable questions and down for none (rank 48 to 17, 29 to 10, 23 to 3, 14 to
+1), took recall@10 from 14/28 to 20/28 and MRR from .27 to .44, and end to end
+gave `match` 15 with `mismatch` 7 at k=25 against 13 and 10 without. It was
+reverted deliberately: a ranker belongs here tuned properly, not bolted on. Note
+also that k=50 measured *worst* end to end (12) despite the best recall (21/28) -
+recall and accuracy disagree, so tune against accuracy.
 
 ## Pool — decide when the plan above is done
 
@@ -67,6 +79,7 @@ four of its dimensions are exercised by this corpus.
 | One value answered for several questions | `6,197,690` was returned for three different Scope 3 questions and `1.1%` for three others. The row label is being satisfied by a plausible neighbour — the same class of bug the period column just fixed, one axis over |
 | Difference and ratio derivations are unexercised | the sum path is measured; no question in this suite spells out a subtraction or a division, so those two operators are covered by unit tests only |
 | Unit conversion is unexercised | the same. No question here states a unit that the printed figure disagrees with, so conversion changed nothing measurable and is covered by unit tests only |
+| Duplicate document, confirmed present | the 2024 annual report is in the index twice: the corrected reprint (773 rows) and the stale earlier printing `dc01f937.pdf` (773 rows). Same text, different bytes, so the `doc_id` digest cannot see it. A duplicate can also occupy two of the k retrieval slots with identical content |
 | Correct the reference | step 3 showed 15 of 17 disputed references are contradicted, absent or unconfirmable. Until they are corrected the accuracy number is capped around 14/28 by the ruler. Needs the source that produced them, not our own answers |
 
 ## Debt
@@ -97,6 +110,8 @@ four of its dimensions are exercised by this corpus.
 | Step 3 — audit the reference | A probe decides, per disputed question, whether the reference value sits on a table row whose label relates to the question — a fact about the documents, not an opinion. The first version asked only whether the number existed anywhere and so decided nothing: with 1% tolerance and power-of-ten freedom almost everything matches something. Verdict on 17: 2 ours, 2 contradicted, 2 absent, 11 unconfirmable |
 | Extractor cites the period column | The row label alone left one figure per period to choose from, and `298,498` came back from a `Baseline 2015` column under a correct `Scope 1` label. The extractor now names the column and refuses when it states a different period; the asked-for period reaches it from the `year` filter, since the question text rarely contains it. `match` 11 → **12**, `mismatch` 13 → **11**, six fabrications became abstentions. Only columns that state a period are judged — demanding one of every column refused two correct board counts under a `Female` header |
 | Step 5 — typed units and derivations | `peerdex.quantity`: a unit registry, a `Quantity` whose arithmetic converts before it combines and refuses across dimensions, and a derivation step allowed **only** where the question spells the arithmetic out. `match` 12 → **13**, `mismatch` 11 → **10** — `Total GHG emissions (Scope 1 + Scope 2 + Scope 3)` is now summed from its three operands instead of read off a neighbouring row, and returns the reference value exactly. Measured first: **0 of 16** wrong-or-missed answers were off by a power of ten or any unit factor, so units and scale were worth nothing here and only the derivation moved the number. Kept as the seam a second domain needs, not counted as accuracy |
+| Step 6 — the cutoff, rejected on measurement | An adaptive cutoff replacing `final_top_k` was measured over four rule families (relevance-relative, distance-relative, largest-gap, coverage) and twenty parameterisations, replayed on one recorded set of rankings so no rule got a luckier query. Fixed `k` dominated the entire frontier: at recall 19/28 it needed 25 passages against 38.8 for the best adaptive rule. Each adaptive rule also needs a corpus-calibrated constant, making them *more* corpus-tuned than the budget they were meant to replace. Nothing was shipped. Ranking is the real lever and sits in the pool as the reranker item; the numbers that prove it are in the note below |
+| Step 7 — second corpus | A second company scored against the same suite: **21 of 28**, against 13 of 28 on the first corpus with identical code and settings. The reference source was found to be one benchmark metric in the data service, whose field labels *are* the suite's questions - which is also why the first attempt at this step failed: the company ingested for it carries no rows under that metric and never could be scored. The corpus was picked on coverage (28 values, the most of any candidate holding documents) and 27 of its 28 values were verified as printed in the document before anything was spent. Failure profile is now informative rather than noise: of 7 misses, 2 are unit or scale, 1 is an unanswered zero, 1 is the single value absent from the document, 3 are real extraction errors |
 | Step 1 — parse cache | `peerdex.index.parse_cached`, keyed on file bytes plus extractor name and version. Measured cold 39.82s → warm 0.01s on a 34-page document, with blocks, pages, `source_meta` and figure images identical. `index_doc` shrank by three lines |
 
 ## Rules

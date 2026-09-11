@@ -3272,7 +3272,7 @@ requires-dist = [
     { name = "gcsfs", specifier = ">=2024.6" },
     { name = "ipython", marker = "extra == 'dev'", specifier = ">=8.27" },
     { name = "kreuzberg", specifier = ">=4.9" },
-    { name = "lancedb", specifier = ">=0.30" },
+    { name = "lancedb", specifier = ">=0.38,<0.39" },
     { name = "liteparse", specifier = ">=2.14" },
     { name = "llama-index", specifier = ">=0.14" },
     { name = "llama-index-embeddings-openai", specifier = ">=0.3" },
