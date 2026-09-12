@@ -8,6 +8,7 @@ a per-doc DLQ. The chunker stitches the resulting picture descriptions
 into the node stream.
 """
 
+from peerdex.vlm._cache import dlq_put
 from peerdex.vlm._describer import OpenAIPictureDescriber, PictureRef
 
-__all__ = ["OpenAIPictureDescriber", "PictureRef"]
+__all__ = ["OpenAIPictureDescriber", "PictureRef", "dlq_put"]

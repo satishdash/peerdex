@@ -8,6 +8,7 @@ LanceDB rows and replaces them cleanly.
 import asyncio
 import math
 import re
+import traceback
 from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
@@ -26,7 +27,9 @@ from peerdex.shared.ids import doc_id as make_doc_id
 from peerdex.shared.logging import get_logger
 from peerdex.shared.metadata import DocumentMetadata, Scalar
 from peerdex.shared.settings import get_settings, resolve_domain
+from peerdex.vlm import dlq_put
 
+_PARSE_FAILURE: Final[str] = "parse"
 log = get_logger("index")
 
 _SAFE_KEY: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -332,6 +335,67 @@ async def _ingest_one(
     }
 
 
+def _failure_record(
+    pdf_path: str | Path, company: str, extractor: str | None, exc: Exception
+) -> dict[str, Any]:
+    """Keep an unreadable document's traceback, and describe the skip to the caller.
+
+    The traceback goes to the dead-letter queue rather than only to the terminal,
+    because an upstream crash is reported as a bug and cannot be recovered from
+    scrollback once a sixteen-document run has scrolled past it.
+    """
+    resolved: str = str(_resolve(pdf_path))
+    instance: Extractor = get_extractor(extractor)
+    did: str = make_doc_id(company, resolved, instance.name)
+    detail: str = f"{type(exc).__name__}: {exc}"
+    dlq_put(
+        did,
+        _PARSE_FAILURE,
+        {
+            "source": resolved,
+            "extractor": instance.name,
+            "extractor_version": instance.version,
+            "error": detail,
+            "traceback": "".join(traceback.format_exception(exc)),
+        },
+    )
+    log.error(f"[index] skipped {resolved}: {detail}")
+    return {"doc_id": did, "source": resolved, "failed": True, "error": detail}
+
+
+async def _ingest_or_record(
+    pdf_path: str | Path,
+    *,
+    company: str,
+    domain: str,
+    year: int,
+    extractor: str | None,
+    attributes: Mapping[str, Scalar] | None,
+) -> dict[str, Any]:
+    """One document ingested, or a failure record when its extractor cannot read it.
+
+    A corpus is a set of documents, and one of them being unreadable must not cost
+    the others. Any exception counts: an extractor is third-party code and the ways
+    it can fail are not ours to enumerate.
+    """
+    try:
+        return await _ingest_one(
+            pdf_path,
+            company=company,
+            domain=domain,
+            year=year,
+            extractor=extractor,
+            attributes=attributes,
+        )
+    except Exception as exc:
+        return _failure_record(pdf_path, company, extractor, exc)
+
+
+def _stored_anything(results: list[dict[str, Any]]) -> bool:
+    """Whether any document reached the table, since indexing an absent one would fail."""
+    return any(not result.get("failed") for result in results)
+
+
 async def index_doc(
     pdf_path: str | Path,
     *,
@@ -347,7 +411,7 @@ async def index_doc(
     call, because one that can be forgotten will be.
     """
     resolved: str = resolve_domain(domain)
-    result: dict[str, Any] = await _ingest_one(
+    result: dict[str, Any] = await _ingest_or_record(
         pdf_path,
         company=company,
         domain=resolved,
@@ -355,7 +419,8 @@ async def index_doc(
         extractor=extractor,
         attributes=attributes,
     )
-    await asyncio.to_thread(_index_table, resolved)
+    if _stored_anything([result]):
+        await asyncio.to_thread(_index_table, resolved)
     return result
 
 
@@ -395,7 +460,7 @@ async def index_dir(
     results: list[dict[str, Any]] = []
     for pdf in pdfs:
         results.append(
-            await _ingest_one(
+            await _ingest_or_record(
                 pdf,
                 company=company,
                 domain=resolved,
@@ -404,5 +469,6 @@ async def index_dir(
                 attributes=attributes,
             )
         )
-    await asyncio.to_thread(_index_table, resolved)
+    if _stored_anything(results):
+        await asyncio.to_thread(_index_table, resolved)
     return results

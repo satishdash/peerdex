@@ -44,6 +44,17 @@ class DoclingCfg(BaseModel):
     generate_page_images: bool = False
     generate_picture_images: bool = True
     picture_image_scale: float = 1.0
+    pdfium_lib_path: str = ""
+
+
+class DoclingRsCfg(BaseModel):
+    heading_hierarchy: bool = False
+    no_text_panels: bool = False
+    artifacts_path: str = ""
+
+
+class XbergCfg(BaseModel):
+    target_dpi: int = 300
 
 
 class ChunkerCfg(BaseModel):
@@ -131,6 +142,8 @@ class Settings(BaseModel):
     domains: list[str] = Field(default_factory=lambda: ["corporate"])
     storage: StorageCfg
     docling: DoclingCfg
+    docling_rs: DoclingRsCfg = DoclingRsCfg()
+    xberg: XbergCfg = XbergCfg()
     chunker: ChunkerCfg
     embed: EmbedCfg
     llm: LLMCfg

@@ -277,3 +277,7 @@ class ODLExtractor:
             data = json.loads(json_files[0].read_text())
 
         return _json_to_extracted_doc(data)
+
+    async def extract_async(self, pdf_path: str | Path) -> ExtractedDoc:
+        """The async half of the contract. The ODL converter is synchronous."""
+        return self.extract(pdf_path)

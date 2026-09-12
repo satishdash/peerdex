@@ -1,239 +1,267 @@
 # Architecture
 
-What the system does today, stage by stage. Kept in text so it diffs in review
-and cannot drift out of date unnoticed.
+How a PDF becomes an answer. Two flows: ingest, then ask.
 
-## The whole thing at a glance
+## Ingest
 
-```
- INGEST  (once per document)
- ┌──────┐   ┌───────┐   ┌───────┐   ┌──────────┐   ┌───────┐   ┌───────┐
- │ PDF  │──►│ parse │──►│ chunk │──►│ describe │──►│ embed │──►│ store │
- └──────┘   └───────┘   └───────┘   │ figures  │   └───────┘   └───────┘
-                │                   └──────────┘                   │
-            cached on                                              │
-          bytes+extractor                                          ▼
-                                                LanceDB rows + FTS + vector index
-                                                `<domain>_parents` rows
- ─────────────────────────────────────────────────────────────────────────────
- ASK  (once per question)
- ┌──────────┐   ┌──────┐   ┌──────────┐   ┌─────────┐   ┌────────┐
- │ question │──►│ plan │──►│ retrieve │──►│ extract │──►│ answer │
- └──────────┘   └──────┘   └──────────┘   └─────────┘   └────────┘
-                               ▲                │
-                               │      no value found, so
-                               └──── reflect: reword and retry (max 2)
-```
-
-Ingest is expensive and happens once. Asking is cheap: **one** database query
-and **one** LLM call in the common case.
-
-## Stage 1 — parse: a PDF becomes typed blocks
+Once per document, expensive, cached at both slow stages.
 
 ```
-  page image / glyph stream
-            │
-            ├─ layout model      → heading, paragraph, figure
-            ├─ table model       → cell grid
-            └─ reading order     → human reading sequence
-            ▼
-   ExtractedDoc = [ Block, ... ] + [ PageInfo, ... ]
+  ┌─────┐
+  │ PDF │
+  └──┬──┘
+     ▼
+ ┌──────────────────────────────────────────────┐
+ │ PARSE                                        │   cache key:
+ │  docling: layout · table · reading order     │ ◄─ file bytes
+ │  → project to typed blocks                   │   + extractor
+ │    heading|paragraph|table|list|picture      │   + config
+ │  → drop tiny + header/footer images          │
+ │  every block: page_no + heading_path         │
+ └───────────────────┬──────────────────────────┘
+                     ▼
+ ┌──────────────────────────────────────────────┐
+ │ CHUNK                                        │
+ │                                              │   cache key:
+ │  1. describe ALL figures, one VLM batch      │ ◄─ image bytes
+ │     (a figure's description IS its text)     │   + model
+ │                                              │   + prompt ver
+ │  2. cut into sections at each heading        │
+ │     → flat list, reading order (no nesting)  │
+ │                                              │
+ │  3. per section, emit TWO LEVELS:            │
+ │                                              │
+ │     table  ─► PARENT   whole table           │
+ │               CHILDREN row groups, caption   │
+ │                        + header repeated     │
+ │                                              │
+ │     prose  ─► PARENT   section ≤1024 tok     │
+ │               CHILDREN 256 tok, 32 overlap   │
+ │                                              │
+ │     figure ─► CHILD    VLM description       │
+ │               (no parent of its own —        │
+ │                points at the section parent) │
+ │                                              │
+ │  every child carries parent_id               │
+ └──────────┬───────────────────────┬───────────┘
+            │ children              │ parents
+            ▼                       │
+ ┌──────────────────────┐           │
+ │ EMBED                │           │
+ │  1,536-dim vector    │           │
+ │  children only       │           │
+ └──────────┬───────────┘           │
+            ▼                       ▼
+ ┌──────────────────────┐  ┌──────────────────────┐
+ │ <domain>             │  │ <domain>_parents     │
+ │ vector + FTS index   │  │ no vector, no index  │
+ │ + parent_id ─────────┼─►│ fetched by id        │
+ │                      │  │                      │
+ │ SEARCHED at ask      │  │ read ONLY on         │
+ │                      │  │ escalation (toggle)  │
+ └──────────────────────┘  └──────────────────────┘
 ```
 
-| block | carries |
-| --- | --- |
-| `HeadingBlock` | text, level, page |
-| `ParagraphBlock` | text, page |
-| `TableBlock` | `headers`, `rows`, `caption`, page |
-| `ListBlock` | items, ordered flag, page |
-| `PictureBlock` | PIL image, bbox area, page |
+### Parse
 
-- Every block carries `page_no` and `heading_path` (ancestor headings): page
-  citations and section context.
-- Four extractors, one contract: `docling` (default), `liteparse`, `kreuzberg`, `odl`.
-- Parse is cached on file bytes + extractor name and version. Cold 39.82 s, warm
-  0.01 s on 34 pages. A damaged entry is a miss, not an error.
+A PDF is positioned glyphs; it does not know what a table is. Docling runs the
+layout, table and reading-order models. Everything after that is projection: the
+result becomes five block kinds, each stamped with its page and its ancestor
+headings, so an answer can cite a page later.
 
-## Stage 2 — chunk: blocks become retrievable units
+Extractors are swappable behind one contract: `docling` (default), `docling-rs`,
+`xberg`, `liteparse`, `odl`.
 
-```
-  a section with a table
-            │
-            ├──► PARENT: whole table or section, ≤1,024 tokens,
-            │            stored in `<domain>_parents`, not searched
-            └──► CHILD:  row groups or sentence splits, 256 tokens, 32 overlap,
-                         embedded and searched
+### Chunk
 
-   parent ◄──── linked both ways ────► child
-```
+Figures are described first, in one batch, because a figure chunk's text *is* the
+description — there is nothing to embed until the vision model has run.
 
-Every table child repeats caption and header row, so label, unit and period
-survive in a chunk small enough to rank:
+Sections are then cut at each heading into a flat list. Section nesting is not
+modelled; `heading_path` is a breadcrumb string, not a link.
+
+Each section yields two levels, never more. The one rule that matters: **every
+table child repeats the caption and the header row.** Without it a row group reads
+`| Scope 1 | 62,587 |` — no unit, no year, unanswerable. With it:
 
 ```
   |        | Unit        | 2025   | 2024    | 2023    |
   | Scope 1| Tonnes CO₂e | 62,587 | 125,386 | 180,898 |
 ```
 
-Ids: `<doc_id>:p<n>` for parents, `<doc_id>:c<n>` for children. They are
-numbered independently, so the kind letter is required.
+### Embed and store
 
-## Stage 3 — describe figures: pixels become text
+Children become 1,536-dimension vectors. Parents are stored without a vector and
+are never searched — they are fetched by `parent_id`, and only when extraction
+abstains. That escalation is a config toggle, so it can be cut without a revert.
 
-```
-  PictureBlock.pil_image ──► vision model ──► "Revenue by region. North America
-                                               43% ($25.5bn), Europe 22% …"
-                                                        │
-                                                        ▼
-                                            stored as a chunk, cached by image
-```
+Metadata is a struct, so a filter pushes into the database as SQL rather than
+being applied in Python afterwards.
 
-Small and edge-of-page images are skipped (area and header/footer band
-thresholds): logos and rules, not data.
+## Ask
 
-## Stage 4 — embed and store
+Static. Two attempts at most, no agent, no loop. Every path is the same length
+every time, which is what makes a toggle measurable.
 
 ```
-  child chunk text ──► embedding model ──► 1536-dim vector
-                                                │
-        ┌───────────────────────────────────────┴──────────────┐
-        ▼                                                      ▼
-  LanceDB table `<domain>`                         LanceDB table `<domain>_parents`
-  one row per CHILD chunk:                         one row per PARENT chunk:
-    id, text, vector, metadata struct                id, text, metadata struct
-        │
-        ├─► FTS index    (tantivy inverted index over `text`)
-        └─► vector index (IVF_PQ over `vector`)
+                    ┌──────────────────────┐
+                    │  question + kind     │
+                    └──────────┬───────────┘
+                               ▼
+                    ┌──────────────────────┐
+                    │  ROUTE               │   quantitative | qualitative
+                    │                      │   + period
+                    └──────────┬───────────┘
+                               ▼
+                    ┌──────────────────────┐
+                    │  FIND ①             │   filter → search → rerank → top k
+                    │                      │   one database call
+                    └──────────┬───────────┘
+                               ▼ passages
+                    ┌──────────────────────┐
+                    │  READ ①             │   value · unit · row label · column
+                    │                      │   (or one call per operand)
+                    └──────────┬───────────┘
+                               ▼
+                    ┌──────────────────────┐
+                    │  RESOLVE ①          │   gates · units · combine
+                    │                      │   no model
+                    └──────────┬───────────┘
+                               │
+           ┌───────────────┴───────────────┐
+        passed                        refused — why?
+           │                                  │
+           │              ┌────────────────┴────────────────┐
+           │         no passages                    found, no value
+           │              │                                │
+           │              ▼  toggle:                      ▼  toggle:
+           │     ┌────────────────┐              ┌────────────────┐
+           │     │  REWRITE       │              │  FETCH PARENT  │
+           │     │  lexical, from │              │  by id,        │
+           │     │  what came back│              │  no search     │
+           │     └───────┬────────┘              └───────┬────────┘
+           │             ▼                               │
+           │          FIND ②                             │
+           │             │                               │
+           │             └──────────┬────────────────┘
+           │                        ▼
+           │             ┌─────────────────────┐
+           │             │  READ ② · RESOLVE ②  │  final attempt
+           │             └──────────┬───────────┘
+           │                        │
+           │            ┌──────────┴──────────┐
+           │         passed                 refused
+           ▼            ▼                      ▼
+   ┌──────────────────┐          ┌──────────────────┐
+   │      answer      │          │ refusal + reason │
+   └──────────────────┘          └──────────────────┘
 ```
 
-- Both indexes are built after every ingest; no-ops if present. Vector index
-  parameters derive from row count: partitions near √rows, sub-vectors dividing
-  the embedding width.
-- `metadata` is a struct, so filters push down as SQL:
-  `metadata.company = '…' AND metadata.year = 2025`.
-- Only children are searched. Parents are written per document and not yet read.
+### Route
 
-## Stage 5 — retrieve: narrow, then rank
+The caller declares `kind`, so nothing is inferred and nothing is paid for. It
+selects the answer's shape, not the question's meaning: the same question asked
+as `quantitative` returns a bare value, as `qualitative` returns prose. Only the
+former is scoreable.
 
-Two modes, selected by `retrieval.query_type`. One database call either way.
+### Find
+
+One database call does all four steps. The filter is a SQL predicate on stored
+metadata, so it narrows before ranking rather than discarding after. Search mode
+and reranker are settings:
+
+| mode | none | rrf | cross-encoder |
+| --- | --- | --- | --- |
+| vector | ✓ | ✗ | ✓ |
+| hybrid | ✓ | ✓ | ✓ |
+
+Reciprocal-rank fusion merges two ranked lists by position, so it needs hybrid to
+have two. A cross-encoder re-reads the question and passage text together and
+scores the pair, which is why it works on one list or two, and why it can only
+run over a shortlist.
+
+### Read
+
+One call returns the value **and the evidence for it**:
 
 ```
-  FULL TEXT (query_type: fts)          DENSE (query_type: vector)  ← default
-  ──────────────────────────           ──────────────────────────
-  question, verbatim                   question ──► embedding model
-        │                                                │  (one API call)
-        ▼                                                ▼
-  .search(text, "fts")                 .search(vector, "vector")
-  .where(<SQL on metadata>)            .where(<SQL on metadata>)
-  .limit(final_top_k)                  .refine_factor(5)   ← see below
-        │                              .limit(final_top_k)
-        │                                     │
-        └──────────────┬──────────────────────┘
-                       ▼
-         scored passages, each with its page
+  { "value": "62,587", "unit": "Tonnes CO₂e", "label": "Scope 1", "column": "2025" }
 ```
 
-`company` is always filtered; any other attribute is optional, AND across keys
-and OR within a key.
+The label and column exist so the next stage can catch the model out. Asking a
+model whether it was right returns yes; asking which row and column it read
+returns something testable.
 
-**Measured on the metric suite, k=25, three runs each with zero spread:**
+Where the question names arithmetic — `Total GHG (Scope 1 + Scope 2 + Scope 3)` —
+each operand is extracted separately from the passages already in hand. That
+costs one call per operand and no further search.
 
-| mode | hits |
+### Resolve
+
+No model. Everything here is decidable:
+
+```
+  { value, unit, label, column }
+            │
+            ├─ no row label?                 ──► refuse
+            ├─ column states another period? ──► refuse
+            ├─ value is not a bare number?   ──► refuse
+            └─ operands present?             ──► combine as typed quantities
+```
+
+The asked-for period comes from the `year` filter, not from the question text,
+which usually contains no year. Only a column that actually states a period is
+judged — a `Female` column over a board count states none.
+
+Operands combine as typed quantities, converting units before adding. If two
+dimensions will not combine, nothing is derived and the single extracted figure
+stands.
+
+A quantitative answer is the value alone. Never a hedge, never prose wrapped
+around a number. A refusal carries its reason.
+
+### Cost
+
+| | |
 | --- | --- |
-| full text | 17/28 |
-| dense, exact (no index) | 19/28 |
-| dense, IVF_PQ index, no refinement | 17/28 |
-| **dense, IVF_PQ index, `refine_factor=5`** | **19/28** |
+| embeddings | 1 |
+| LLM calls | 1, or 2 on escalation |
+| reranking | 0 calls — local or arithmetic |
+| toggles | search mode · reranker · top k · escalate on refusal |
 
-## Stage 6 — extract: passages become one figure
+### Why static
 
-```
-  question + qualifiers (period, scope, unit) + passages
-            │
-            ▼
-      one LLM call
-            │
-            ▼
-   { "value": "62,587", "unit": "Tonnes CO₂e", "label": "Scope 1", "column": "2025" }
-            │
-            ├─ label empty?                   ──► refuse
-            ├─ column states another period?  ──► refuse
-            └─ value not a bare number?       ──► refuse
-```
+An agent would replace the fixed branch with a chosen move: reword the query,
+widen the filter, stop early. That is more capable and less predictable, and the
+same question can then take different paths on different runs. A toggle cannot be
+measured against a control that varies. Agents come after the toggles are scored,
+not before.
 
-`column` matters because a correct row label still leaves one figure per period:
+## Scoring
+
+Evaluation only. Never on the path that serves a question.
 
 ```
-  |        | Baseline 2015 | 2024    | 2025   |   ← asked for 2025
-  | Scope 1|   298,498     | 125,386 | 62,587 |
-```
-
-- The asked-for period comes from the `year` filter, not the question text.
-- Only a column that states a period is judged. A `Female` column holding a
-  board count states none; demanding one refused two correct answers.
-- Quantitative: the value alone or an empty string. Qualitative: a synthesis
-  step returning prose. Both carry citations.
-
-A question that spells the arithmetic out is derived; nothing else is:
-
-```
-  "Total GHG emissions (Scope 1 + Scope 2 + Scope 3)"
-            │
-            ▼
-  operands extracted from the retrieved passages ──► 62,587 t  108,000 t  6,100,000 t
-            │   typed unit + scale, converted before adding
-            ▼
-      6,270,587 t      any operand missing, or dimensions that do not combine
-                       ──► derive nothing, fall back to the printed figure
-```
-
-Magnitudes are `Decimal`. Units live in `peerdex.quantity`, which also converts
-the result to the unit the question states.
-
-## Stage 7 — reflect: one bounded retry
-
-```
-  extract returned nothing
-            │
-            ▼
-  reword the query from what came back ──► retrieve again ──► extract again
-            │
-            └─ still nothing after 2 attempts ──► refuse, with the reason
-```
-
-Deterministic retry, not a framework agent. Every attempt is recorded on the
-answer.
-
-## How it is scored (evaluation only, never the serving path)
-
-```
-  reference value ──┐
-                    ├─► compare ──► match | mismatch | scale_mismatch
-  our answer   ─────┤              | missed | abstained | extra
-  our unit     ─────┘
+  reference ──┐
+              ├─► match | mismatch | scale_mismatch | missed | abstained | extra
+  answer    ──┘
 ```
 
 - 1% relative tolerance, so `100.9` matches `100`.
 - Power-of-ten aware: `58,739` against `58,739,000,000` is a `scale_mismatch`.
-- **The unit can confirm that scale.** Reported in `$m`, that same answer is a
-  `match` — the unit was the missing evidence. A unit never rescales on its own,
-  and a magnitude after `per` is ignored because it belongs to the denominator.
-- `extra` means we produced a value where the reference is empty. That is a
-  candidate improvement awaiting review, **not** a proven win.
+- The unit can settle that. Reported in `$m`, the same answer is a `match`.
+- `extra` means a value was produced where the reference is empty. A candidate to
+  review, not a proven win.
 
 ## Configuration
 
 `config/config.yaml`, with `${ENV_VAR:-default}` expansion. Secrets in `.env`.
-No model name is hardcoded anywhere.
+No model name is hardcoded.
 
 | concern | key |
 | --- | --- |
 | embedding model | `embed.model` |
-| agent and extraction model | `llm.model` |
-| synthesis model | `llm.synth_model` |
-| evaluation judge | `llm.judge_model` |
-| figure description model | `vlm.model` |
-| chunk sizes | `chunker.parent_chunk_tokens`, `chunker.child_chunk_tokens` |
 | passages returned | `retrieval.final_top_k` |
 | search mode | `retrieval.query_type` |
 | vector index type | `index.vector_type` |
+| parent and child size | `chunker.parent_chunk_tokens`, `chunker.child_chunk_tokens` |

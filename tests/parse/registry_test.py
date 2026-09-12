@@ -6,7 +6,7 @@ from peerdex.parse import DoclingExtractor, get_extractor
 
 
 def test_given_no_name_when_extractor_requested_then_default_is_docling() -> None:
-    """docling is the default: it keeps table row labels attached to their values."""
+    """docling.rs panics on a non-breaking space in a heading, so docling stays the default."""
     assert isinstance(get_extractor(), DoclingExtractor)
 
 

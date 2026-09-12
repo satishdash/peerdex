@@ -17,9 +17,10 @@ from peerdex.parse._contract import (
     TableBlock,
 )
 from peerdex.parse._docling import DoclingExtractor, from_docling_document
-from peerdex.parse._kreuzberg import KreuzbergExtractor
+from peerdex.parse._docling_rs import DoclingRsExtractor
 from peerdex.parse._liteparse import LiteParseExtractor
 from peerdex.parse._odl import ODLExtractor
+from peerdex.parse._xberg import XbergExtractor
 
 # ---------- registry ----------
 
@@ -44,14 +45,16 @@ def available_extractors() -> list[str]:
 
 # Register built-in extractors
 register_extractor("docling", DoclingExtractor)
+register_extractor("docling-rs", DoclingRsExtractor)
 register_extractor("liteparse", LiteParseExtractor)
 register_extractor("odl", ODLExtractor)
-register_extractor("kreuzberg", KreuzbergExtractor)
+register_extractor("xberg", XbergExtractor)
 
 
 __all__ = [
     "Block",
     "DoclingExtractor",
+    "DoclingRsExtractor",
     "ExtractedDoc",
     "Extractor",
     "HeadingBlock",
@@ -62,6 +65,7 @@ __all__ = [
     "ParagraphBlock",
     "PictureBlock",
     "TableBlock",
+    "XbergExtractor",
     "available_extractors",
     "from_docling_document",
     "get_extractor",

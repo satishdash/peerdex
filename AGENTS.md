@@ -15,7 +15,7 @@ Agentic RAG over corporate reports. Personal project — treat it as restricted.
 
 ```
 src/peerdex/
-  parse/       extractors: docling, kreuzberg, odl, liteparse. All emit ExtractedDoc.
+  parse/       extractors: docling, docling-rs, xberg, odl, liteparse. All emit ExtractedDoc.
   chunk/       hierarchical parent/child chunker, VLM description of figures
   index/       LanceDB + LlamaIndex docstore, idempotent per doc_id
   retrieve/    PassageRetriever: one filtered LanceDB search, fts or vector
@@ -34,15 +34,15 @@ experiments/   slow evaluation and benchmark harnesses, hit real APIs
 
 | Command | What it does |
 | :--- | :--- |
-| `make install` | `uv sync` |
+| `make install` | `uv sync --all-extras` |
 | `uv run rag index <pdf-or-dir> -c <company> -d <domain> -y <year> [-e <extractor>] [-m k=v]` | Ingest one PDF or a directory of them |
 | `uv run rag ask "<q>" -c <company> -d <domain> [-f k=v]` | One question |
 | `uv run rag suite default -c <company> -d <domain> [-f k=v]` | Whole question suite |
 | `make test` | Unit tests, warnings fatal |
 | `make lint` / `make format` | ruff check + format |
-| `make eval COMPANY=<c> YEAR=<y>` | deepeval judge suite (spends API credit) |
+| `uv run python experiments/score_suite.py --company <c> --year <y> --extractor <e>` | Score the suite end to end (spends API credit) |
 | `uv run python experiments/test_extractor_benchmark.py <dir-or-pdfs>` | Extraction benchmark |
-| `uv run mypy src/peerdex/<module>.py` | Type check (strict) |
+| `uv run ty check src/peerdex/<module>.py` | Type check |
 
 ## Evaluation
 

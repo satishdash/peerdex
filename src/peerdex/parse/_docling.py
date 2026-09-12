@@ -140,6 +140,10 @@ class DoclingExtractor:
         doc = _converter().convert(str(pdf_path)).document
         return _to_extracted_doc(doc)
 
+    async def extract_async(self, pdf_path: str | Path) -> ExtractedDoc:
+        """The async half of the contract. Docling's converter is synchronous."""
+        return self.extract(pdf_path)
+
 
 def from_docling_document(doc: Any) -> ExtractedDoc:
     """Public hook so cached `DoclingDocument` pickles can be re-projected

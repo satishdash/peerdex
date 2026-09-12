@@ -95,3 +95,76 @@ def test_given_a_configured_domain_in_any_case_when_resolved_then_it_is_normalis
 ) -> None:
     """Callers type it by hand, so case and stray spaces must not decide the table."""
     assert resolve_domain(given) == "corporate"
+
+
+def _failing(mocker: MockerFixture, *, bad: str) -> tuple[Any, Any, Any]:
+    """Ingest that raises for one named document and succeeds for every other."""
+
+    async def ingest(pdf_path: Any, **_: Any) -> dict[str, Any]:
+        if Path(pdf_path).name == bad:
+            raise RuntimeError("conversion worker panicked")
+        return {"doc_id": Path(pdf_path).stem}
+
+    one: Any = mocker.patch("peerdex.index._index._ingest_one", side_effect=ingest)
+    table: Any = mocker.patch("peerdex.index._index._index_table")
+    dlq: Any = mocker.patch("peerdex.index._index.dlq_put")
+    return one, table, dlq
+
+
+async def test_given_one_unreadable_document_when_indexing_a_directory_then_the_rest_still_index(
+    mocker: MockerFixture, tmp_path: Path
+) -> None:
+    """One document an extractor cannot read must not cost the other fifteen."""
+    _pdfs(tmp_path, "a", "b", "c")
+    _, table, _ = _failing(mocker, bad="b.pdf")
+
+    results: list[dict[str, Any]] = await index_dir(
+        tmp_path, company="acme", domain="corporate", year=2025
+    )
+
+    assert [result.get("failed", False) for result in results] == [False, True, False]
+    table.assert_called_once()
+
+
+async def test_given_an_unreadable_document_when_indexing_then_the_traceback_is_kept(
+    mocker: MockerFixture, tmp_path: Path
+) -> None:
+    """An upstream crash is reported as a bug, so it cannot live only in scrollback."""
+    _pdfs(tmp_path, "a")
+    _, _, dlq = _failing(mocker, bad="a.pdf")
+
+    await index_dir(tmp_path, company="acme", domain="corporate", year=2025)
+
+    payload: dict[str, Any] = dlq.call_args.args[2]
+    assert dlq.call_args.args[1] == "parse"
+    assert "conversion worker panicked" in payload["error"]
+    assert "RuntimeError" in payload["traceback"]
+    assert payload["source"].endswith("a.pdf")
+    assert payload["extractor"] == "docling"
+
+
+async def test_given_a_single_unreadable_document_when_indexing_then_it_is_recorded_not_raised(
+    mocker: MockerFixture, tmp_path: Path
+) -> None:
+    """A one-file run reports the skip the same way a directory run does."""
+    _pdfs(tmp_path, "a")
+    _failing(mocker, bad="a.pdf")
+
+    result: dict[str, Any] = await index_doc(
+        tmp_path / "a.pdf", company="acme", domain="corporate", year=2025
+    )
+
+    assert result["failed"] is True
+    assert "conversion worker panicked" in result["error"]
+
+
+async def test_given_every_document_fails_when_indexing_then_the_table_is_left_alone(
+    mocker: MockerFixture, tmp_path: Path
+) -> None:
+    """Indexing a table that was never written would fail on an empty database."""
+    _pdfs(tmp_path, "a")
+    _, table, _ = _failing(mocker, bad="a.pdf")
+
+    await index_dir(tmp_path, company="acme", domain="corporate", year=2025)
+
+    table.assert_not_called()

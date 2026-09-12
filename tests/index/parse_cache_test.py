@@ -1,7 +1,8 @@
 """A parse is paid for once per document and extractor, not once per run."""
 
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, Final
 
 import fsspec
 import pytest
@@ -9,6 +10,18 @@ from pytest_mock import MockerFixture
 
 from peerdex.index import parse_cached
 from peerdex.parse import ExtractedDoc, ParagraphBlock
+from peerdex.shared.settings import DoclingCfg, DoclingRsCfg, XbergCfg
+
+_SETTINGS: Final[str] = "peerdex.index._parse_cache.get_settings"
+
+
+def _settings(hierarchy: bool = False, dpi: int = 300) -> Any:
+    """A settings stub carrying only the sections the cache key fingerprints."""
+    return SimpleNamespace(
+        docling=DoclingCfg(artifacts_path=""),
+        docling_rs=DoclingRsCfg(heading_hierarchy=hierarchy),
+        xberg=XbergCfg(target_dpi=dpi),
+    )
 
 
 def _doc(text: str) -> ExtractedDoc:
@@ -33,9 +46,12 @@ class _Sync:
         self.calls += 1
         return _doc(self._text)
 
+    async def extract_async(self, pdf_path: str | Path) -> ExtractedDoc:
+        return self.extract(pdf_path)
+
 
 class _Async(_Sync):
-    """Extractor preferring the async entry point, as docling does."""
+    """Extractor whose async entry point does the work, as the xberg one does."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -144,7 +160,7 @@ async def test_given_an_unreadable_entry_when_parsing_then_it_falls_back_to_the_
 async def test_given_an_async_extractor_when_parsing_then_the_async_entry_point_is_used(
     pdf: Path, cache: Any
 ) -> None:
-    """Docling exposes extract_async; the cache must not force it onto the sync path."""
+    """The cache takes the async entry point, never the sync one behind it."""
     extractor: _Async = _Async()
 
     result: ExtractedDoc = await parse_cached(pdf, extractor)
@@ -152,3 +168,32 @@ async def test_given_an_async_extractor_when_parsing_then_the_async_entry_point_
     assert extractor.async_calls == 1
     assert extractor.calls == 0
     assert result.blocks[0].text == "parsed async"
+
+
+async def test_given_a_changed_parse_setting_when_parsing_then_the_cache_is_missed(
+    pdf: Path, cache: Any, mocker: MockerFixture
+) -> None:
+    """A knob that changes parse output must not serve a parse made under the old one."""
+    mocker.patch(_SETTINGS, return_value=_settings(hierarchy=False))
+    await parse_cached(pdf, _Sync(text="flat"))
+    mocker.patch(_SETTINGS, return_value=_settings(hierarchy=True))
+    nested: _Sync = _Sync(text="nested")
+
+    result: ExtractedDoc = await parse_cached(pdf, nested)
+
+    assert nested.calls == 1
+    assert result.blocks[0].text == "nested"
+
+
+async def test_given_unchanged_parse_settings_when_parsing_then_the_cache_still_hits(
+    pdf: Path, cache: Any, mocker: MockerFixture
+) -> None:
+    """The fingerprint has to be stable, or the cache would never hit at all."""
+    mocker.patch(_SETTINGS, return_value=_settings())
+    extractor: _Sync = _Sync()
+
+    await parse_cached(pdf, extractor)
+    mocker.patch(_SETTINGS, return_value=_settings())
+    await parse_cached(pdf, extractor)
+
+    assert extractor.calls == 1

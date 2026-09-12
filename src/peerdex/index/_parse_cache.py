@@ -8,13 +8,15 @@ The cached value is the ``ExtractedDoc`` itself, pickled. It cannot be JSON:
 ``PictureBlock`` carries a live PIL image that the figure-description stage
 consumes, and encoding those as text would cost more than the cache saves.
 
-The key is the file's bytes plus the extractor's name and version, so the same
-PDF is shared across companies, a re-download of identical bytes hits, and an
-extractor version bump misses cleanly. A cache is an optimisation, so an entry
-that cannot be read is a miss rather than an error.
+The key is the file's bytes, the extractor's name and version, and a fingerprint
+of the parse configuration, so the same PDF is shared across companies, a
+re-download of identical bytes hits, and a version bump or a changed knob misses
+cleanly. A cache is an optimisation, so an entry that cannot be read is a miss
+rather than an error.
 """
 
 import asyncio
+import json
 import pickle
 from pathlib import Path
 from typing import Any, Final
@@ -22,15 +24,36 @@ from typing import Any, Final
 from peerdex.parse import ExtractedDoc, Extractor
 from peerdex.shared import cache
 from peerdex.shared.logging import get_logger
+from peerdex.shared.settings import get_settings
 
 log = get_logger("index")
 
 _NS: Final[str] = "parse"
+_CFG_SECTIONS: Final[tuple[str, ...]] = ("docling", "docling_rs", "xberg")
+
+
+def _config_fingerprint() -> str:
+    """The parse-affecting configuration, condensed to one key component.
+
+    An extractor's output depends on its settings as much as on its version, and
+    the settings are nowhere in the version string. Folding them into the key
+    means a changed knob misses cleanly instead of serving a parse produced under
+    the old one. All parse sections are hashed together rather than only the
+    running extractor's, so a new extractor needs no change here; the price is a
+    re-parse that was not strictly required, never a stale answer.
+    """
+    settings: Any = get_settings()
+    blob: dict[str, Any] = {
+        section: getattr(settings, section).model_dump() for section in _CFG_SECTIONS
+    }
+    return cache.hash_key(json.dumps(blob, sort_keys=True))
 
 
 def _entry(pdf_path: Path, extractor: Extractor) -> str:
-    """Where this document's parse lives, keyed by its bytes and the extractor."""
-    key: str = cache.hash_key(pdf_path.read_bytes(), extractor.name, extractor.version)
+    """Where this parse lives, keyed by the document, the extractor and its config."""
+    key: str = cache.hash_key(
+        pdf_path.read_bytes(), extractor.name, extractor.version, _config_fingerprint()
+    )
     return f"{cache.join_path(_NS)}/{key}.pkl"
 
 
@@ -56,10 +79,8 @@ def _store(path: str, doc: ExtractedDoc) -> None:
 
 
 async def _extract(pdf_path: Path, extractor: Extractor) -> ExtractedDoc:
-    """The extractor's async entry point when it has one, else the sync one."""
-    if hasattr(extractor, "extract_async"):
-        return await extractor.extract_async(pdf_path)
-    return extractor.extract(pdf_path)
+    """Every extractor implements the async entry point, so there is one path."""
+    return await extractor.extract_async(pdf_path)
 
 
 def _lookup(pdf_path: str | Path, extractor: Extractor) -> tuple[Path, str, ExtractedDoc | None]:

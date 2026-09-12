@@ -1,6 +1,5 @@
 """Shared IO-edge helpers for the evaluation funnel runners. No scoring logic lives here."""
 
-import asyncio
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -80,10 +79,7 @@ class CorpusBuilder:
 
     @staticmethod
     async def _extract(extractor: str, pdf: Path) -> ExtractedDoc:
-        instance = get_extractor(extractor)
-        if hasattr(instance, "extract_async"):
-            return await instance.extract_async(pdf)
-        return await asyncio.to_thread(instance.extract, pdf)
+        return await get_extractor(extractor).extract_async(pdf)
 
 
 def stage_payload(

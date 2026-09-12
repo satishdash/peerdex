@@ -20,7 +20,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
-from peerdex.parse import ExtractedDoc
+from peerdex.parse import ExtractedDoc, Extractor
 
 console = Console()
 
@@ -96,11 +96,8 @@ class BenchmarkRunner:
         self._out_path.write_text(json.dumps([asdict(r) for r in self._runs], indent=2))
 
 
-def _extract(extractor: object, document: Path) -> ExtractedDoc:
-    """Call whichever half of the Extractor protocol this extractor implements."""
-    sync = getattr(extractor, "extract", None)
-    if sync is not None:
-        return sync(document)
+def _extract(extractor: Extractor, document: Path) -> ExtractedDoc:
+    """The same entry point production uses, so a benchmark stays comparable."""
     return asyncio.run(extractor.extract_async(document))
 
 

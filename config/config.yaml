@@ -16,6 +16,15 @@ docling:
   generate_page_images: false   # we never consume full-page renders
   generate_picture_images: true
   picture_image_scale: 1.0
+  pdfium_lib_path: ${PDFIUM_LIB_PATH:-~/.cache/docling.rs/pdfium/lib}
+
+docling_rs:
+  heading_hierarchy: true
+  no_text_panels: false
+  artifacts_path: ${DOCLING_RS_ARTIFACTS_PATH:-}
+
+xberg:
+  target_dpi: 300
 
 chunker:
   tokenizer: cl100k_base

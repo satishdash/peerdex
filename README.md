@@ -1,6 +1,6 @@
 # peerdex
 
-Agentic RAG over business PDFs. Ask a question, get the value or nothing.
+RAG over business PDFs. Ask a question, get the value or nothing.
 
 Document-type agnostic: the code knows tables, charts, figures and prose, not
 report kinds. A domain (`-d`) is one LanceDB table plus one prompt set.
@@ -8,8 +8,7 @@ report kinds. A domain (`-d`) is one LanceDB table plus one prompt set.
 ## Quick start
 
 ```bash
-uv sync
-cp .env.example .env          # then set OPENAI_API_KEY
+make install                  # then set OPENAI_API_KEY in .env
 uv run rag index report.pdf -c acme -d corporate -y 2025
 uv run rag ask "Gross global Scope 1 emissions" -c acme -d corporate -f year=2025
 ```
@@ -17,23 +16,12 @@ uv run rag ask "Gross global Scope 1 emissions" -c acme -d corporate -f year=202
 ## How it works
 
 ```
-INGEST   PDF → parse → chunk → describe figures → embed → LanceDB
-ASK      question → plan → retrieve → extract → reflect → answer
+INGEST   PDF → parse → chunk → embed → LanceDB
+ASK      question → route → find → read → resolve → answer | refusal
 ```
 
-| stage | what it does | key terms |
-| --- | --- | --- |
-| parse | PDF → typed blocks: heading, paragraph, table, list, picture. `docling` by default. Cached on file bytes + extractor. | `ExtractedDoc`, `TableBlock` |
-| chunk | Hierarchical. Parent = one heading section or one table, ≤1,024 tokens. Child = 256-token sentence split, 32 overlap. Table children are row groups that repeat caption and header row. | `HierarchicalChunker`, `parent_chunk_tokens`, `child_chunk_tokens` |
-| describe figures | A VLM turns each picture into text, indexed like prose. | `ingest_vlm_prompt`, `prompt_version` |
-| embed + store | Children embedded at 1,536 dims into LanceDB table `<domain>` with an `IVF_PQ` vector index and a tantivy full-text index. Parents go to `<domain>_parents`, stored but not searched. | `index.vector_type`, `vector_refine_factor` |
-| plan | Quantitative or qualitative. Bracketed arithmetic such as `(Scope 1 + Scope 2 + Scope 3)` becomes operands. | `QuestionPlanner`, `ArithmeticQuestion` |
-| retrieve | One LanceDB call filtered by company and attributes. `vector` (default, refine factor 5) or `fts`. k=25. | `retrieval.query_type`, `final_top_k` |
-| extract | One LLM call returns value, unit, scale and the column it read. Refused if that column states another period. Operands are combined as typed quantities. | `Quantity`, `UnitRegistry`, `DerivationEngine` |
-| reflect | Nothing found → reword once, retry. Max 2 attempts, all recorded on the answer. | `QueryReformulator` |
-
-A quantitative answer is the value alone, or an empty string, with unit and
-page. A qualitative answer is prose with citations. Detail per stage in
+A quantitative answer is the value alone, or nothing, with unit and page. A
+qualitative answer is prose with citations. Both flows, stage by stage, in
 [`docs/architecture.md`](docs/architecture.md).
 
 ## Documents
@@ -43,47 +31,54 @@ page. A qualitative answer is prose with citations. Detail per stage in
 - `-d domain` is required. An unconfigured domain is refused.
 - `doc_id = sha256(company + extractor + file bytes)`. Re-indexing replaces;
   extractor variants coexist.
+- A document the extractor cannot read is skipped, with its traceback written to
+  `cache/dlq/<doc_id>/parse.json`. One bad PDF does not stop a directory ingest.
 
 ## Extractors
 
-| `-e` | notes |
-| --- | --- |
-| `docling` (default) | best table structure; 1,121 s over 11 PDFs |
-| `liteparse` | 177 s |
-| `kreuzberg` | text only; 7 s |
-| `odl` | needs Java 11+ and `opendataloader-pdf-hybrid --port 5002` |
+All emit the same `ExtractedDoc`, so they are swappable. One run over 16 PDFs,
+946 pages, 78 MB:
 
-## Where it stands
+| `-e` | time | tables | table cells | figures | text |
+| --- | --- | --- | --- | --- | --- |
+| `docling` (default) | 779 s | 874 | 40,924 | 435 | 2.23 M |
+| `docling-rs` | 416 s | 886 | 42,742 | 418 | 2.23 M |
+| `liteparse` | 283 s | 1,076 | 39,908 | 341 | 2.52 M |
+| `xberg` | **23 s** | 660 | 19,447 | 376 | 3.62 M |
+| `odl` | not run | | | | |
 
-End to end, 28 reference questions per corpus, k=25:
+Speed decides nothing. What decides is whether a value survives parsing with its
+row label, unit and period intact.
 
-| corpus | documents | match |
-| --- | --- | --- |
-| A | 11 reports, one issuer, one year | 14/28 |
-| B | 1 annual + 1 ESG report, one year | no reference values exist |
-| C | 1 report, one year | 21/28 |
-
-History, rejected options and the plan: [`docs/backlog.md`](docs/backlog.md).
+- `docling-rs` matches docling's output at roughly twice the speed, but panics on
+  a non-breaking space in a heading when `heading_hierarchy` is on
+  ([issue 377](https://github.com/docling-project/docling.rs/issues/377)). Not the
+  default until that is fixed. Needs a pdfium shared library; point
+  `docling.pdfium_lib_path` at a local build.
+- `liteparse` splits one table into many, losing the row-label and header
+  structure a value needs.
+- `xberg` finds the text and loses the structure. Its table models never engage
+  on a digital PDF, and no config knob changes that.
+- `odl` needs Java 11+ and `opendataloader-pdf-hybrid --port 5002`.
 
 ## Evaluation
 
 ```bash
 uv run python experiments/score_suite.py --company acme --year 2025 --extractor docling
-make stage0 COMPANY=acme YEAR=2025 PDF_DIR=/abs/dir   # parse recall
-make stage1 COMPANY=acme YEAR=2025 PDF_DIR=/abs/dir   # figure recall
-make stage2 COMPANY=acme YEAR=2025                    # retrieval recall
-make stage3 COMPANY=acme YEAR=2025                    # end to end
-make bench                                            # funnel report
-make eval   COMPANY=acme YEAR=2025                    # deepeval quality judges
 ```
 
-Outcomes: `match`, `mismatch`, `scale_mismatch`, `missed`, `abstained`,
-`extra`. Never report one LLM run; run three.
+Outcomes: `match`, `mismatch`, `scale_mismatch`, `missed`, `abstained`, `extra`.
+An empty reference is scored too — answering one is `extra`, abstaining is
+`abstained`, which is how hallucination is measured.
+
+Never report one LLM run; run three.
 
 ## Config
 
 `config/config.yaml` with `${ENV_VAR:-default}` expansion; secrets in `.env`.
 No model name is hardcoded. Storage is `./lancedb/` + `./cache/`.
+
+Every optional stage is a toggle, scored off and on before it becomes a default.
 
 ## Development
 
@@ -93,5 +88,4 @@ make lint      # ruff check + format --check
 make format
 ```
 
-Conventions: `AGENTS.md`. Plan: `docs/backlog.md`. Designs:
-`docs/fact-layer.md`, `docs/prompt-profiles.md`.
+Conventions: `AGENTS.md`. Design: `docs/architecture.md`. Plan: `docs/backlog.md`.

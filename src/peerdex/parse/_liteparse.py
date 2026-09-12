@@ -8,6 +8,7 @@ objects and never touch a real PDF.
 """
 
 import asyncio
+import builtins
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
@@ -111,7 +112,7 @@ class ImageLike(Protocol):
     def id(self) -> str: ...
 
     @property
-    def bytes(self) -> bytes: ...
+    def bytes(self) -> builtins.bytes: ...
 
 
 class ParseResultLike(Protocol):
