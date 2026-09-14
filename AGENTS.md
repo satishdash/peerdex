@@ -14,12 +14,12 @@ Agentic RAG over corporate reports. Personal project — treat it as restricted.
 ## Layout
 
 ```
-src/peerdex/
+src/
   parse/       extractors: docling, docling-rs, xberg, odl, liteparse. All emit ExtractedDoc.
   chunk/       hierarchical parent/child chunker, VLM description of figures
-  index/       LanceDB + LlamaIndex docstore, idempotent per doc_id
+  index/       LanceDB child rows and parent rows, idempotent per doc_id
   retrieve/    PassageRetriever: one filtered LanceDB search, fts or vector
-  agent/       bounded state machine (_agent), payloads and ports (_model), planning (_planner)
+  agent/       bounded state machine (agent), payloads and ports (model), planning (planner)
   quantity/    typed units and scale, and the arithmetic a question may ask for
   scoring/     pure answer-vs-reference comparison, evaluation only
   synthesize/  cited answer
@@ -38,11 +38,11 @@ experiments/   slow evaluation and benchmark harnesses, hit real APIs
 | `uv run rag index <pdf-or-dir> -c <company> -d <domain> -y <year> [-e <extractor>] [-m k=v]` | Ingest one PDF or a directory of them |
 | `uv run rag ask "<q>" -c <company> -d <domain> [-f k=v]` | One question |
 | `uv run rag suite default -c <company> -d <domain> [-f k=v]` | Whole question suite |
-| `make test` | Unit tests, warnings fatal |
+| `make tests` | Unit tests, warnings fatal |
 | `make lint` / `make format` | ruff check + format |
 | `uv run python experiments/score_suite.py --company <c> --year <y> --extractor <e>` | Score the suite end to end (spends API credit) |
 | `uv run python experiments/test_extractor_benchmark.py <dir-or-pdfs>` | Extraction benchmark |
-| `uv run ty check src/peerdex/<module>.py` | Type check |
+| `uv run ty check src/<module>.py` | Type check |
 
 ## Evaluation
 
@@ -52,25 +52,48 @@ experiments/   slow evaluation and benchmark harnesses, hit real APIs
 
 Non-negotiable. They outrank convenience and they outrank an existing file that violates them.
 
-- **No comments.** Not section dividers, not explanations, not restatements of the code. Docstrings only: module, class, public method, one line where one line does. Never restate a type in a docstring.
+### Structure
+
+- **Nothing at module scope but imports, classes, the module docstring, type aliases and `__all__`.** No module-level function, no module-level variable, no module-level call. A logger, a compiled pattern and a constant are all class state — `_LOG: ClassVar[...]`, not `log = get_logger(...)`.
+- No leading underscore on a **module** filename. No leading underscore on a **class** name. Functions and methods may keep one for private.
+- Public methods first inside a class, private and protected after.
+- Every package has `__init__.py`, `tests/` included.
+- Flat `src/` layout. No distribution sub-package inside it.
+- Every document in this repository stays under 400 lines.
+
+### Enforcement
+
+- Google docstrings in **full form** on module, class and every method, private included, and on Protocol stubs: every parameter in `Args:`, every non-`None` return in `Returns:`, every raise in `Raises:`. Wording stays minimal — one line per entry, never restating a type.
+- ruff (`D` + `DOC`, `convention = "google"`, `preview = true`) checks the summary, `Returns:` and `Raises:`, and a partly filled `Args:` block. **No ruff rule requires an `Args:` section to exist**, so that one is checked by hand on every method that takes a parameter.
+- **`C901` is never ignored.** A `per-file-ignores` entry of `["C901"]` is debt to be deleted, never renamed to a new path and never carried forward. A function over complexity 3 is decomposed, never exempted, never `# noqa`. When a stage is refactored, its C901 ignore goes in that same stage's work.
+- Measure real complexity with the ignores bypassed: `uv run ruff check --isolated --select C901 --config 'lint.mccabe.max-complexity=3' <path>`.
+- A red lint is an acceptable intermediate state while a stage is being converted. Never weaken a rule to make it green.
+- Fix any violation your own change introduces, inside that same change.
+
+### Design
+
 - Acceptance criteria first, then logic correctness, then optimisation.
-- SOLID. Strict hexagonal architecture: IO at the adapter edge, pure logic behind a public seam that tests drive without touching the outside world.
+- SOLID, complete DDD, strict hexagonal: IO at the adapter edge, pure logic behind a public seam that tests drive without touching the outside world.
 - Pure-Java-style OOP — real classes and polymorphism, not module-level function soup.
-- OO design patterns wherever one genuinely applies. `parse/_liteparse.py` is the reference: Strategy per block kind, injectable gate, pure projector, adapter on top.
-- Strict TDD: the failing test first, run it, confirm it fails for the right reason, then implement.
-- Strict typing everywhere including local variables. Python 3.14 syntax. Never `from __future__ import annotations`.
+- OO design patterns wherever one genuinely applies. `parse/liteparse.py` is the reference: Strategy per block kind, injectable gate, pure projector, adapter on top. The gold standard outside this repo is the sp utils package in platform svc and processr_upload in the core orchestrator benchmarking pipeline.
 - Cyclomatic complexity ≤ 3 per method.
-- Consolidate and parameterise tests. Exhaustive assertions, exact counts (`== 3`, never `> 0`).
+- Strict typing everywhere including local variables. Python 3.14 syntax. Never `from __future__ import annotations`.
+- **No comments.** Not section dividers, not explanations, not restatements of the code. Applies to `.py`, `.toml` and `.yaml` alike. Docstrings only: module, class, public method, one line where one line does. Never restate a type in a docstring. Protocol property stubs still get a docstring.
+- Logging is `get_logger(__name__)` with f-strings. Never `print()`, never `%s` lazy formatting.
+- Reduce bloated logic rather than adding to it.
+
+### Tests
+
+- Strict TDD: the failing test first, run it, confirm it fails for the right reason, then implement.
+- Files are `*_test.py`; names are `test_given_<precondition>_when_<action>_then_<expected>`.
+- Consolidate and parameterise. Exhaustive assertions, exact counts (`== 3`, never `> 0`).
 - Never test declarations — enums, schemas, dataclasses, exceptions. They are covered organically.
 - Never test `_`-prefixed helpers. Drive them through the public seam.
-- Reduce bloated logic and bloated tests rather than adding to them.
-- Test files are `*_test.py`; test names are `test_given_<precondition>_when_<action>_then_<expected>`.
 - Mock with the `mocker` fixture, never `@patch`. Never call a real API from `tests/`.
-- Logging is `get_logger(__name__)` with f-strings. Never `print()`, never `%s` lazy formatting.
 
 ## Boundaries
 
 - 🚫 `.env` holds live secrets. Never print, log, echo, copy or commit its contents.
-- 🚫 Never push. Commit only, and only when asked.
+- 🚫 Never push. Commit only, and only when asked. A commit message is one line, sentence case, present-tense third-person verb, no prefix, no scope, no body, no trailer; several concerns join with `+`. Show the draft before committing.
 - 🚫 Never hardcode an API key or a model name — models come from `config/config.yaml` and env overrides.
 - ⚠️ Ask first before adding a dependency, a new extractor, or a managed cloud service.

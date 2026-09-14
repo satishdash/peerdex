@@ -20,7 +20,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
-from peerdex.parse import ExtractedDoc, Extractor
+from parse import ExtractedDoc, Extractor
 
 console = Console()
 
@@ -65,12 +65,12 @@ class BenchmarkRunner:
         return self._runs
 
     def _one(self, name: str, document: Path) -> DocumentRun:
-        from peerdex.parse import get_extractor
+        from parse import ExtractorRegistry
 
         size_mb: float = document.stat().st_size / 1_048_576
         console.print(f"[cyan]{name}[/cyan] -> {document.name} ({size_mb:.1f} MB)")
         try:
-            extractor = get_extractor(name)
+            extractor = ExtractorRegistry.create(name)
         except Exception as exc:
             return DocumentRun(name, "?", document.name, size_mb, error=repr(exc))
 
@@ -181,9 +181,9 @@ def main() -> None:
     parser.add_argument("--out", type=Path, default=Path("bench_extractors.json"))
     args = parser.parse_args()
 
-    from peerdex.parse import available_extractors
+    from parse import ExtractorRegistry
 
-    extractors: list[str] = args.extractors or available_extractors()
+    extractors: list[str] = args.extractors or ExtractorRegistry.available()
     documents: list[Path] = _documents(args.paths)
 
     console.rule(f"[bold]{len(extractors)} extractors x {len(documents)} documents")

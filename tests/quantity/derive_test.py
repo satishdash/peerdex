@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from peerdex.quantity import (
+from quantity import (
     ArithmeticQuestion,
     Derivation,
     DerivationEngine,

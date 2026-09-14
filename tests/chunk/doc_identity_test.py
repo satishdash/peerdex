@@ -3,9 +3,9 @@
 from llama_index.core.schema import TextNode
 from llama_index.core.vector_stores.utils import node_to_metadata_dict
 
-from peerdex.chunk import HierarchicalChunker
-from peerdex.parse import ExtractedDoc, PageInfo, ParagraphBlock, TableBlock
-from peerdex.shared.metadata import DocumentMetadata
+from chunk import HierarchicalChunker
+from parse import ExtractedDoc, PageInfo, ParagraphBlock, TableBlock
+from shared.document_metadata import DocumentMetadata
 
 
 def _extracted_doc() -> ExtractedDoc:

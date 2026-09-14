@@ -6,16 +6,16 @@ import pytest
 from llama_index.core.schema import TextNode
 from pytest_mock import MockerFixture
 
-from peerdex.index import ParentStore
+from index import ParentStore
 
 
 def _db(mocker: MockerFixture, existing: list[str]) -> tuple[Any, Any]:
     tbl = mocker.MagicMock()
     db = mocker.MagicMock()
-    db.table_names.return_value = existing
+    db.list_tables.return_value.tables = existing
     db.open_table.return_value = tbl
     db.create_table.return_value = tbl
-    mocker.patch("peerdex.index._parents.lancedb.connect", return_value=db)
+    mocker.patch("index.parent_store.lancedb.connect", return_value=db)
     return db, tbl
 
 

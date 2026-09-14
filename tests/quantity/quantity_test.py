@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from peerdex.quantity import IncompatibleUnitsError, Quantity, QuantityParser, UnitRegistry
+from quantity import IncompatibleUnitsError, Quantity, QuantityParser, UnitRegistry
 
 PARSER: QuantityParser = QuantityParser()
 REGISTRY: UnitRegistry = UnitRegistry()

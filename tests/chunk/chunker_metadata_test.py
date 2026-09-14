@@ -2,10 +2,10 @@
 
 from llama_index.core.schema import TextNode
 
-from peerdex.chunk import HierarchicalChunker
-from peerdex.parse import ExtractedDoc, HeadingBlock, PageInfo, ParagraphBlock, TableBlock
-from peerdex.shared.metadata import DocumentMetadata
-from peerdex.shared.prompts import PROMPTS
+from chunk import HierarchicalChunker
+from parse import ExtractedDoc, HeadingBlock, PageInfo, ParagraphBlock, TableBlock
+from shared.document_metadata import DocumentMetadata
+from shared.document_prompts import DocumentPrompts
 
 EXPECTED_EXCLUDED: list[str] = [
     "bucket_key",
@@ -44,6 +44,7 @@ def _extracted_doc() -> ExtractedDoc:
 
 
 async def test_given_attributes_when_chunked_then_nodes_carry_merged_metadata() -> None:
+    """Caller attributes ride alongside the fixed keys, and opaque ids stay unembedded."""
     metadata: DocumentMetadata = DocumentMetadata(
         company=" Acme ",
         year=2025,
@@ -73,14 +74,18 @@ async def test_given_attributes_when_chunked_then_nodes_carry_merged_metadata() 
         "is_parent": False,
         "idx": 0,
         "source_uri": "/docs/acme.pdf",
-        "prompt_version": PROMPTS.prompt_version,
+        "prompt_version": DocumentPrompts.current().prompt_version,
         "extractor": "liteparse",
         "title": "Data Index",
         "benchmark": 1,
         "bucket_key": "Acme/a.pdf",
         "url": "https://x",
     }
+    assert table_child.parent_node is not None
+    assert table_child.parent_node.node_id == parents[0].node_id
     prose_child: TextNode = children[1]
+    assert prose_child.parent_node is not None
+    assert prose_child.parent_node.node_id == parents[1].node_id
     assert prose_child.metadata["is_table"] is False
     assert prose_child.metadata["benchmark"] == 1
     assert prose_child.metadata["idx"] == 1
@@ -90,6 +95,7 @@ async def test_given_attributes_when_chunked_then_nodes_carry_merged_metadata() 
 
 
 async def test_given_no_attributes_when_chunked_then_fixed_keys_only() -> None:
+    """Without caller attributes a node carries exactly the fixed metadata keys."""
     metadata: DocumentMetadata = DocumentMetadata(
         company="acme", year=2024, source_uri="/docs/b.pdf", extractor="docling"
     )

@@ -28,13 +28,12 @@ xberg:
 
 chunker:
   tokenizer: cl100k_base
-  max_tokens: 512
   parent_chunk_tokens: 1024
   child_chunk_tokens: 256
+  child_chunk_overlap: 32
 
 embed:
   model: ${OPENAI_EMBED_MODEL:-text-embedding-3-small}
-  dim: 1536
   batch_size: 128
 
 llm:
@@ -57,12 +56,14 @@ resilience:
   timeout_seconds: 60
 
 index:
-  vector_type: ${PEERDEX_VECTOR_INDEX_TYPE:-IVF_PQ}
+  vector_type: ${PEERDEX_VECTOR_INDEX_TYPE:-IVF_SQ}
 
 retrieval:
   final_top_k: 25
   query_type: ${PEERDEX_QUERY_TYPE:-vector}
-  vector_refine_factor: 5
+  reranker: ${PEERDEX_RERANKER:-none}
+  reranker_model: ${PEERDEX_RERANKER_MODEL:-BAAI/bge-reranker-base}
+  escalate_on_refusal: ${PEERDEX_ESCALATE:-true}
 
 logging:
   level: ${PEERDEX_LOG_LEVEL:-INFO}

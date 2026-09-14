@@ -7,9 +7,9 @@ collapse to "always merge".
 
 from llama_index.core.schema import NodeRelationship, TextNode
 
-from peerdex.chunk import HierarchicalChunker
-from peerdex.parse import ExtractedDoc, PageInfo, ParagraphBlock, TableBlock
-from peerdex.shared.metadata import DocumentMetadata
+from chunk import HierarchicalChunker
+from parse import ExtractedDoc, PageInfo, ParagraphBlock, TableBlock
+from shared.document_metadata import DocumentMetadata
 
 HEADING: list[str] = ["Climate"]
 
@@ -81,10 +81,14 @@ async def test_given_two_tables_in_one_section_when_chunked_then_parents_are_dis
     for marker in ("62587", "1234"):
         owner = [p for p in parents if marker in p.text]
         assert len(owner) == 1
-        listed = owner[0].relationships[NodeRelationship.CHILD]
-        assert len(listed) == 1
-        kid = next(c for c in children if c.node_id == listed[0].node_id)
-        assert marker in kid.text
+        kids = [
+            c
+            for c in children
+            if (rel := c.relationships.get(NodeRelationship.PARENT)) is not None
+            and rel.node_id == owner[0].node_id
+        ]
+        assert len(kids) == 1
+        assert marker in kids[0].text
 
 
 async def test_given_first_section_when_chunked_then_no_node_is_its_own_parent() -> None:
@@ -113,19 +117,17 @@ async def test_given_parents_and_children_when_chunked_then_ids_are_disjoint() -
     assert parent_ids & child_ids == set()
 
 
-async def test_given_children_when_chunked_then_each_parent_lists_them() -> None:
-    """``child_nodes`` is what auto-merging counts, so it must match the real children."""
+async def test_given_children_when_chunked_then_each_child_points_at_a_real_parent() -> None:
+    """``parent_id`` is the only link that reaches the database, so it must resolve."""
     parents, children = await _chunked()
 
-    for parent in parents:
-        listed = parent.relationships.get(NodeRelationship.CHILD)
-        expected = [
-            c.node_id
-            for c in children
-            if (rel := c.relationships.get(NodeRelationship.PARENT)) is not None
-            and rel.node_id == parent.node_id
-        ]
+    parent_ids = {p.node_id for p in parents}
+    pointed_at = {
+        rel.node_id
+        for c in children
+        if (rel := c.relationships.get(NodeRelationship.PARENT)) is not None
+    }
 
-        assert listed is not None
-        assert [info.node_id for info in listed] == expected
-        assert expected != []
+    assert pointed_at != set()
+    assert pointed_at <= parent_ids
+    assert pointed_at == parent_ids

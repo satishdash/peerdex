@@ -3,10 +3,10 @@
 import tiktoken
 from llama_index.core.schema import TextNode
 
-from peerdex.chunk import HierarchicalChunker
-from peerdex.parse import ExtractedDoc, PageInfo, TableBlock
-from peerdex.shared.metadata import DocumentMetadata
-from peerdex.shared.settings import get_settings
+from chunk import HierarchicalChunker
+from parse import ExtractedDoc, PageInfo, TableBlock
+from shared.document_metadata import DocumentMetadata
+from shared.settings import get_settings
 
 _ENC = tiktoken.get_encoding("cl100k_base")
 
@@ -53,7 +53,7 @@ async def test_given_table_over_budget_when_chunked_then_row_groups_fit_and_repe
 
 
 async def test_given_positional_headers_when_chunked_then_first_row_carries_the_columns() -> None:
-    """docling emits 0..n headers, so the real column names live in the first row."""
+    """Docling emits 0..n headers, so the real column names live in the first row."""
     rows = [["metric", *YEARS], *[[m, "1", "2", "3", "4"] for m in METRICS]]
 
     children = await _children(["0", "1", "2", "3", "4"], rows)

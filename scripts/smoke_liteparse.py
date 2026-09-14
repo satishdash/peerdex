@@ -6,7 +6,7 @@ from pathlib import Path
 
 from liteparse import LiteParse
 
-from peerdex.parse._liteparse import LiteParseExtractor, PictureGate
+from parse.liteparse import LiteParseExtractor, PictureGate
 
 PDF = Path(os.environ["PEERDEX_SMOKE_PDF"]).expanduser()
 

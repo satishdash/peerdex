@@ -6,15 +6,15 @@ from dataclasses import dataclass, field
 import pytest
 from PIL import Image
 
-from peerdex.parse import (
+from parse import (
     HeadingBlock,
     ListBlock,
     ParagraphBlock,
     PictureBlock,
     TableBlock,
 )
-from peerdex.parse._liteparse import PictureGate
-from peerdex.parse._xberg import HeadingRule, XbergProjector
+from parse.liteparse import PictureGate
+from parse.xberg import HeadingRule, XbergProjector
 
 _PAGE_WIDTH: float = 842.0
 _PAGE_HEIGHT: float = 595.0
@@ -99,7 +99,7 @@ def test_given_narrative_text_when_projected_then_paragraph_carries_its_page() -
 
 
 def test_given_native_table_when_projected_then_headers_split_from_rows() -> None:
-    """xberg reports tables natively, so no whitespace heuristic decides the grid."""
+    """Xberg reports tables natively, so no whitespace heuristic decides the grid."""
     document: FakeDocument = FakeDocument(
         tables=[FakeTable([["Metric", "2025"], ["Scope 1", "62,587"]], page_number=4)]
     )
@@ -165,7 +165,7 @@ def test_given_page_elements_when_projected_then_every_page_is_reported() -> Non
 
 
 def test_given_bulleted_narrative_text_when_projected_then_it_becomes_one_list() -> None:
-    """docling and liteparse both emit lists; the PDF path must not lose them to prose."""
+    """Docling and liteparse both emit lists; the PDF path must not lose them to prose."""
     document: FakeDocument = FakeDocument(
         elements=[
             FakeElement("narrative_text", "• Board independence"),

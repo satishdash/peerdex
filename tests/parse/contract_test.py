@@ -10,24 +10,24 @@ import inspect
 
 import pytest
 
-from peerdex.parse import available_extractors, get_extractor
+from parse import ExtractorRegistry
 
 
-@pytest.mark.parametrize("name", available_extractors())
+@pytest.mark.parametrize("name", ExtractorRegistry.available())
 def test_given_a_registered_extractor_when_inspected_then_both_entry_points_exist(
     name: str,
 ) -> None:
     """A sync `extract` and an awaitable `extract_async`, on every extractor."""
-    extractor: object = get_extractor(name)
+    extractor: object = ExtractorRegistry.create(name)
 
     assert callable(getattr(extractor, "extract", None))
     assert inspect.iscoroutinefunction(getattr(extractor, "extract_async", None))
 
 
-@pytest.mark.parametrize("name", available_extractors())
+@pytest.mark.parametrize("name", ExtractorRegistry.available())
 def test_given_a_registered_extractor_when_inspected_then_it_names_itself(name: str) -> None:
     """`source_meta` provenance and the parse cache key both come from these."""
-    extractor: object = get_extractor(name)
+    extractor: object = ExtractorRegistry.create(name)
 
     assert getattr(extractor, "name", "") == name
     assert getattr(extractor, "version", "")

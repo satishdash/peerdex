@@ -6,7 +6,7 @@ from io import BytesIO
 import pytest
 from PIL import Image
 
-from peerdex.parse._contract import (
+from parse.contract import (
     ExtractedDoc,
     HeadingBlock,
     ListBlock,
@@ -15,7 +15,7 @@ from peerdex.parse._contract import (
     PictureBlock,
     TableBlock,
 )
-from peerdex.parse._liteparse import LiteParseExtractor, PictureGate
+from parse.liteparse import LiteParseExtractor, PictureGate
 
 
 @dataclass

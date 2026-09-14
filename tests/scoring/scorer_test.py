@@ -2,7 +2,8 @@
 
 import pytest
 
-from peerdex.scoring import AnswerScorer, Comparison, NumericParser
+from quantity import NumericParser
+from scoring import AnswerScorer, Comparison
 
 
 @pytest.mark.parametrize(

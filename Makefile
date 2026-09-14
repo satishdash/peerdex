@@ -19,7 +19,7 @@ need_year    = test -n "$(YEAR)"    || (echo "YEAR=... required"    && exit 2)
 need_pdfs    = test -n "$(PDF_DIR)$(PDF)" || (echo "PDF_DIR=/abs/dir or PDF=/abs/file.pdf required" && exit 2)
 year_filter  = $(if $(YEAR),-f year=$(YEAR))
 
-.PHONY: install clean test lint format index ask suite
+.PHONY: install clean tests lint format index ask suite
 
 install:
 	$(UV) sync --all-extras
@@ -32,7 +32,7 @@ install:
 clean:
 	rm -rf cache lancedb
 
-test:
+tests:
 	$(UV) run pytest tests/ -q -p no:deepeval -W error
 
 lint:

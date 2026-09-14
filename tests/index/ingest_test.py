@@ -6,8 +6,8 @@ from typing import Any
 import pytest
 from pytest_mock import MockerFixture
 
-from peerdex.index._index import index_dir, index_doc
-from peerdex.shared.settings import resolve_domain
+from index import Ingest
+from shared.settings import resolve_domain
 
 
 def _stub(mocker: MockerFixture) -> tuple[Any, Any]:
@@ -16,9 +16,9 @@ def _stub(mocker: MockerFixture) -> tuple[Any, Any]:
     ``_index_table`` must be stubbed or these tests reach the real LanceDB.
     """
     one: Any = mocker.patch(
-        "peerdex.index._index._ingest_one", mocker.AsyncMock(return_value={"doc_id": "x"})
+        "index.ingest.Ingest._one", mocker.AsyncMock(return_value={"doc_id": "x"})
     )
-    return one, mocker.patch("peerdex.index._index._index_table")
+    return one, mocker.patch("index.ingest.TableIndexes.build")
 
 
 def _pdfs(directory: Path, *stems: str) -> None:
@@ -46,7 +46,7 @@ async def test_given_a_directory_when_indexed_then_the_right_pdfs_run_in_order(
         (tmp_path / extra).write_text("x")
     one, _ = _stub(mocker)
 
-    await index_dir(tmp_path, company="acme", domain="corporate", year=2025)
+    await Ingest.directory(tmp_path, company="acme", domain="corporate", year=2025)
 
     assert [call.args[0].name for call in one.call_args_list] == expected
 
@@ -60,9 +60,9 @@ async def test_given_either_entry_point_when_indexed_then_the_table_is_indexed_o
     _, indexed = _stub(mocker)
 
     if entry == "doc":
-        await index_doc(tmp_path / "a.pdf", company="acme", domain="corporate", year=2025)
+        await Ingest.document(tmp_path / "a.pdf", company="acme", domain="corporate", year=2025)
     else:
-        await index_dir(tmp_path, company="acme", domain="corporate", year=2025)
+        await Ingest.directory(tmp_path, company="acme", domain="corporate", year=2025)
 
     indexed.assert_called_once()
 
@@ -74,7 +74,7 @@ async def test_given_an_empty_directory_when_indexed_then_it_fails(
     _stub(mocker)
 
     with pytest.raises(ValueError, match="no PDFs"):
-        await index_dir(tmp_path, company="acme", domain="corporate", year=2025)
+        await Ingest.directory(tmp_path, company="acme", domain="corporate", year=2025)
 
 
 @pytest.mark.parametrize("bad", ["invoices", "corporat", ""])
@@ -86,7 +86,7 @@ async def test_given_an_unconfigured_domain_when_indexed_then_it_fails(
     _stub(mocker)
 
     with pytest.raises(ValueError, match="unknown domain"):
-        await index_dir(tmp_path, company="acme", domain=bad, year=2025)
+        await Ingest.directory(tmp_path, company="acme", domain=bad, year=2025)
 
 
 @pytest.mark.parametrize("given", ["corporate", "CORPORATE", " Corporate "])
@@ -105,9 +105,9 @@ def _failing(mocker: MockerFixture, *, bad: str) -> tuple[Any, Any, Any]:
             raise RuntimeError("conversion worker panicked")
         return {"doc_id": Path(pdf_path).stem}
 
-    one: Any = mocker.patch("peerdex.index._index._ingest_one", side_effect=ingest)
-    table: Any = mocker.patch("peerdex.index._index._index_table")
-    dlq: Any = mocker.patch("peerdex.index._index.dlq_put")
+    one: Any = mocker.patch("index.ingest.Ingest._one", side_effect=ingest)
+    table: Any = mocker.patch("index.ingest.TableIndexes.build")
+    dlq: Any = mocker.patch("index.ingest.DeadLetterQueue.put")
     return one, table, dlq
 
 
@@ -118,7 +118,7 @@ async def test_given_one_unreadable_document_when_indexing_a_directory_then_the_
     _pdfs(tmp_path, "a", "b", "c")
     _, table, _ = _failing(mocker, bad="b.pdf")
 
-    results: list[dict[str, Any]] = await index_dir(
+    results: list[dict[str, Any]] = await Ingest.directory(
         tmp_path, company="acme", domain="corporate", year=2025
     )
 
@@ -133,7 +133,7 @@ async def test_given_an_unreadable_document_when_indexing_then_the_traceback_is_
     _pdfs(tmp_path, "a")
     _, _, dlq = _failing(mocker, bad="a.pdf")
 
-    await index_dir(tmp_path, company="acme", domain="corporate", year=2025)
+    await Ingest.directory(tmp_path, company="acme", domain="corporate", year=2025)
 
     payload: dict[str, Any] = dlq.call_args.args[2]
     assert dlq.call_args.args[1] == "parse"
@@ -150,7 +150,7 @@ async def test_given_a_single_unreadable_document_when_indexing_then_it_is_recor
     _pdfs(tmp_path, "a")
     _failing(mocker, bad="a.pdf")
 
-    result: dict[str, Any] = await index_doc(
+    result: dict[str, Any] = await Ingest.document(
         tmp_path / "a.pdf", company="acme", domain="corporate", year=2025
     )
 
@@ -165,6 +165,6 @@ async def test_given_every_document_fails_when_indexing_then_the_table_is_left_a
     _pdfs(tmp_path, "a")
     _, table, _ = _failing(mocker, bad="a.pdf")
 
-    await index_dir(tmp_path, company="acme", domain="corporate", year=2025)
+    await Ingest.directory(tmp_path, company="acme", domain="corporate", year=2025)
 
     table.assert_not_called()

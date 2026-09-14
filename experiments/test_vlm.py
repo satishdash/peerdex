@@ -17,7 +17,7 @@ import pytest
 from conftest import load_vlm_golden
 from deepeval.metrics import FaithfulnessMetric
 
-from peerdex.shared.settings import get_settings
+from shared.settings import get_settings
 
 _GOLDEN = load_vlm_golden()
 _JUDGE = get_settings().llm.judge_model or get_settings().llm.model

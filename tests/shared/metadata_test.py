@@ -2,15 +2,13 @@
 
 import pytest
 
-from peerdex.shared.metadata import (
-    AttributeFilter,
-    DocumentMetadata,
-    KeyValueParser,
-    MetadataVisibility,
-    Scalar,
-    ScalarSetValueParser,
-    ScalarValueParser,
-)
+from shared.attribute_filter import AttributeFilter
+from shared.document_metadata import DocumentMetadata
+from shared.key_value_parser import KeyValueParser
+from shared.metadata import Scalar
+from shared.metadata_visibility import MetadataVisibility
+from shared.scalar_set_value_parser import ScalarSetValueParser
+from shared.scalar_value_parser import ScalarValueParser
 
 SCALAR: ScalarValueParser = ScalarValueParser()
 SCALAR_SET: ScalarSetValueParser = ScalarSetValueParser()

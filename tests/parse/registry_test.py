@@ -2,15 +2,15 @@
 
 import pytest
 
-from peerdex.parse import DoclingExtractor, get_extractor
+from parse import DoclingExtractor, ExtractorRegistry
 
 
 def test_given_no_name_when_extractor_requested_then_default_is_docling() -> None:
     """docling.rs panics on a non-breaking space in a heading, so docling stays the default."""
-    assert isinstance(get_extractor(), DoclingExtractor)
+    assert isinstance(ExtractorRegistry.create(), DoclingExtractor)
 
 
 def test_given_unknown_name_when_extractor_requested_then_rejected() -> None:
     """An unregistered name is refused rather than silently falling back."""
     with pytest.raises(ValueError, match="unknown extractor 'nope'"):
-        get_extractor("nope")
+        ExtractorRegistry.create("nope")

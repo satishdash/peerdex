@@ -10,7 +10,7 @@ from typing import Any
 
 from pytest_mock import MockerFixture
 
-from peerdex.index._index import _refresh_indices
+from index import TableIndexes
 
 
 def _index(mocker: MockerFixture, name: str, unindexed: int) -> Any:
@@ -24,7 +24,7 @@ def _index(mocker: MockerFixture, name: str, unindexed: int) -> Any:
 def _table(mocker: MockerFixture, indices: list[Any]) -> Any:
     tbl: Any = mocker.MagicMock()
     tbl.list_indices.return_value = indices
-    mocker.patch("peerdex.index._index.table", return_value=tbl)
+    mocker.patch("index.vector_index.Tables.open", return_value=tbl)
     return tbl
 
 
@@ -34,7 +34,7 @@ def test_given_rows_outside_an_index_when_refreshing_then_the_table_is_optimised
     """Folding new rows in incrementally is the point; a full rebuild is the waste."""
     tbl: Any = _table(mocker, [_index(mocker, "vector_idx", 2053)])
 
-    _refresh_indices("corporate")
+    TableIndexes.refresh("corporate")
 
     tbl.optimize.assert_called_once()
 
@@ -48,7 +48,7 @@ def test_given_one_stale_index_of_several_when_refreshing_then_it_still_optimise
         [_index(mocker, "text_idx", 0), _index(mocker, "vector_idx", 2053)],
     )
 
-    _refresh_indices("corporate")
+    TableIndexes.refresh("corporate")
 
     tbl.optimize.assert_called_once()
 
@@ -62,7 +62,7 @@ def test_given_every_row_indexed_when_refreshing_then_nothing_is_optimised(
         [_index(mocker, "text_idx", 0), _index(mocker, "vector_idx", 0)],
     )
 
-    _refresh_indices("corporate")
+    TableIndexes.refresh("corporate")
 
     tbl.optimize.assert_not_called()
 
@@ -73,6 +73,6 @@ def test_given_no_indexes_at_all_when_refreshing_then_nothing_is_optimised(
     """Before the first index exists there is nothing to fold rows into."""
     tbl: Any = _table(mocker, [])
 
-    _refresh_indices("corporate")
+    TableIndexes.refresh("corporate")
 
     tbl.optimize.assert_not_called()

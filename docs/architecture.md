@@ -15,8 +15,8 @@ Once per document, expensive, cached at both slow stages.
  │ PARSE                                        │   cache key:
  │  docling: layout · table · reading order     │ ◄─ file bytes
  │  → project to typed blocks                   │   + extractor
- │    heading|paragraph|table|list|picture      │   + config
- │  → drop tiny + header/footer images          │
+ │    heading|paragraph|table|list|picture      │   + version
+ │  → drop tiny + header/footer images          │   + config
  │  every block: page_no + heading_path         │
  └───────────────────┬──────────────────────────┘
                      ▼
@@ -153,7 +153,7 @@ every time, which is what makes a toggle measurable.
            │         passed                 refused
            ▼            ▼                      ▼
    ┌──────────────────┐          ┌──────────────────┐
-   │      answer      │          │ refusal + reason │
+   │answer + citations│          │ refusal + reason │
    └──────────────────┘          └──────────────────┘
 ```
 
@@ -172,6 +172,7 @@ and reranker are settings:
 
 | mode | none | rrf | cross-encoder |
 | --- | --- | --- | --- |
+| fts | ✓ | ✗ | ✓ |
 | vector | ✓ | ✗ | ✓ |
 | hybrid | ✓ | ✓ | ✓ |
 
