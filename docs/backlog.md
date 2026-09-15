@@ -4,9 +4,8 @@ The design is settled in `architecture.md`. Everything below follows from it.
 
 | # | work | done when |
 | --- | --- | --- |
-| 1 | Implement the finalised design. Build what is missing, delete what the design does not use | ingest and ask match the two diagrams, and nothing outside them remains |
-| 2 | Evals per stage, so any part can be scored on its own | each stage reports a number, and a toggle can be turned on, measured, and kept or cut |
-| 3 | Prompt profiles for non-report documents | a non-report PDF answers correctly under its own profile, with the report path unchanged |
+| 1 | Evals per stage, so any part can be scored on its own | each stage reports a number, and a toggle can be turned on, measured, and kept or cut |
+| 2 | Prompt profiles for non-report documents | a non-report PDF answers correctly under its own profile, with the report path unchanged |
 
 Config is how a part gets cut. Every optional stage ships as a toggle, is scored
 with it off and on, and only becomes a default once the number says so.
