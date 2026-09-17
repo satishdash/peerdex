@@ -2,8 +2,8 @@
 
 import pytest
 
+from evaluation import AnswerScorer, Comparison
 from quantity import NumericParser
-from scoring import AnswerScorer, Comparison
 
 
 @pytest.mark.parametrize(

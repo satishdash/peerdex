@@ -2,6 +2,8 @@
 
 from typing import ClassVar
 
+from shared.package_version import PackageVersion
+
 
 class EngineIdentity:
     """The opendataloader engine's name and version.
@@ -12,4 +14,4 @@ class EngineIdentity:
     """
 
     NAME: ClassVar[str] = "odl"
-    VERSION: ClassVar[str] = "1.0"
+    VERSION: ClassVar[str] = PackageVersion.of("opendataloader-pdf")

@@ -13,7 +13,6 @@ from parse.xberg import XbergExtractor
 class ExtractorRegistry:
     """Registry and factory for the extractors a caller may request by name."""
 
-    DEFAULT: ClassVar[str] = "docling"
     _EXTRACTORS: ClassVar[dict[str, type[Extractor]]] = {
         "docling": DoclingExtractor,
         "docling-rs": DoclingRsExtractor,
@@ -33,11 +32,11 @@ class ExtractorRegistry:
         cls._EXTRACTORS[name] = extractor
 
     @classmethod
-    def create(cls, name: str | None = None) -> Extractor:
-        """Instantiate the named extractor, defaulting to docling.
+    def create(cls, name: str) -> Extractor:
+        """Instantiate the named extractor.
 
         Args:
-            name: The extractor to build, or None for the default.
+            name: The extractor to build.
 
         Returns:
             A new instance of the named extractor.
@@ -45,10 +44,9 @@ class ExtractorRegistry:
         Raises:
             ValueError: If no extractor is registered under that name.
         """
-        key: str = name or cls.DEFAULT
-        if key not in cls._EXTRACTORS:
-            raise ValueError(f"unknown extractor '{key}'. available: {cls.available()}")
-        return cls._EXTRACTORS[key]()
+        if name not in cls._EXTRACTORS:
+            raise ValueError(f"unknown extractor '{name}'. available: {cls.available()}")
+        return cls._EXTRACTORS[name]()
 
     @classmethod
     def available(cls) -> list[str]:

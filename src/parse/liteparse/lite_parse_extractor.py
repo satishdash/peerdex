@@ -13,6 +13,7 @@ from parse.liteparse.lite_parse_projector import LiteParseProjector
 from parse.liteparse.picture_gate import PictureGate
 from parse.liteparse.protocols.parse_result_like import ParseResultLike
 from shared.logging import Logging
+from shared.package_version import PackageVersion
 
 
 class LiteParseExtractor:
@@ -21,7 +22,7 @@ class LiteParseExtractor:
     _LOG: ClassVar[Any] = Logging.get("parse.liteparse")
 
     name: str = "liteparse"
-    version: str = "2.14.2"
+    version: str = PackageVersion.of("liteparse")
 
     def __init__(self, gate: PictureGate | None = None) -> None:
         """Build the figure gate and the projector that uses it.

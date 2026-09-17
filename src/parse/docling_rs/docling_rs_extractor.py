@@ -8,6 +8,7 @@ from parse.contract import ExtractedDoc
 from parse.docling import DoclingExtractor
 from parse.docling_rs.converter_factory import ConverterFactory
 from shared.logging import Logging
+from shared.package_version import PackageVersion
 
 
 class DoclingRsExtractor:
@@ -16,7 +17,7 @@ class DoclingRsExtractor:
     _LOG: ClassVar[Any] = Logging.get(__name__)
 
     name: str = "docling-rs"
-    version: str = "1.43"
+    version: str = PackageVersion.of("docling-rs")
 
     def extract(self, pdf_path: str | Path) -> ExtractedDoc:
         """Convert one PDF, then restamp provenance onto the shared projection.

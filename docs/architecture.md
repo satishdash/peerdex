@@ -238,21 +238,35 @@ same question can then take different paths on different runs. A toggle cannot b
 measured against a control that varies. Agents come after the toggles are scored,
 not before.
 
-## Scoring
-
-Evaluation only. Never on the path that serves a question.
+## Evaluation
 
 ```
-  reference ──┐
-              ├─► match | mismatch | scale_mismatch | missed | abstained | extra
-  answer    ──┘
+  suite ──► ask ──► answers ──► compare ──► buckets ──► scores
+  gitignored         │            │
+                     │            ├─ strict  0.001 absolute
+                     │            └─ native  1% relative, scale aware
+                     ├─► stored, rescored without asking again
+                     └─► find alone · recall@k · ndcg@k · expected_pages · no model
 ```
 
-- 1% relative tolerance, so `100.9` matches `100`.
-- Power-of-ten aware: `58,739` against `58,739,000,000` is a `scale_mismatch`.
-- The unit can settle that. Reported in `$m`, the same answer is a `match`.
-- `extra` means a value was produced where the reference is empty. A candidate to
-  review, not a proven win.
+| reference | answer | bucket |
+| --- | --- | --- |
+| a value | the same, or the alternate | good |
+| a value | another | wrong |
+| a value | none | missed |
+| "" | none | silent |
+| "" | any | invented |
+
+```
+  precision       = good / (good + wrong + invented)
+  positive recall = good / (good + wrong + missed)
+  negative recall = silent / (silent + invented)
+
+  native  match | mismatch | scale_mismatch | missed | abstained | extra
+          scale_mismatch → wrong   abstained → silent   extra → invented
+
+  companies averaged unweighted · never a single run · never on the serving path
+```
 
 ## Configuration
 

@@ -9,6 +9,7 @@ from parse.contract import (
 )
 from parse.xberg.xberg_projector import XbergProjector
 from shared.logging import Logging
+from shared.package_version import PackageVersion
 from shared.settings import get_settings
 
 
@@ -18,7 +19,7 @@ class XbergExtractor:
     _LOG: ClassVar[Any] = Logging.get(__name__)
 
     name: str = "xberg"
-    version: str = "1.1"
+    version: str = PackageVersion.of("xberg")
 
     def __init__(self, projector: XbergProjector | None = None) -> None:
         """Hold the projector, building a default one when none is given.

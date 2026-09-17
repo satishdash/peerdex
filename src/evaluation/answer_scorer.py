@@ -2,9 +2,9 @@
 
 import math
 
+from evaluation.comparison import Category, Comparison
 from quantity.magnitudes import Magnitudes
 from quantity.numeric_parser import NumericParser
-from scoring.comparison import Category, Comparison
 
 
 class AnswerScorer:

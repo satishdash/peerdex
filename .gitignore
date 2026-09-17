@@ -16,6 +16,7 @@ lancedb/
 results/
 .reindex-backup/
 bench_extractors.json
+config/suites.yaml
 .deepeval/
 .deepeval_cache/
 .pytest_cache/

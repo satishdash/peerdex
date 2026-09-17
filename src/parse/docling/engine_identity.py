@@ -2,6 +2,8 @@
 
 from typing import ClassVar
 
+from shared.package_version import PackageVersion
+
 
 class EngineIdentity:
     """The docling engine's name and version.
@@ -12,4 +14,4 @@ class EngineIdentity:
     """
 
     NAME: ClassVar[str] = "docling"
-    VERSION: ClassVar[str] = "2.90"
+    VERSION: ClassVar[str] = PackageVersion.of("docling")

@@ -1,13 +1,8 @@
-"""Extractor registry: name resolution and the project default."""
+"""Extractor registry: name resolution."""
 
 import pytest
 
-from parse import DoclingExtractor, ExtractorRegistry
-
-
-def test_given_no_name_when_extractor_requested_then_default_is_docling() -> None:
-    """docling.rs panics on a non-breaking space in a heading, so docling stays the default."""
-    assert isinstance(ExtractorRegistry.create(), DoclingExtractor)
+from parse import ExtractorRegistry
 
 
 def test_given_unknown_name_when_extractor_requested_then_rejected() -> None:

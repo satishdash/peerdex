@@ -66,7 +66,7 @@ def test_given_no_passages_when_escalated_then_nothing_is_fetched(
 
 def test_given_a_question_when_rewritten_then_it_stays_lexical() -> None:
     """The rewrite is lexical, so it costs no model call."""
-    assert Rewriter.rewrite("What were Acme Air's scope 1 emissions in 2024?", []) != ""
+    assert Rewriter.rewrite("What were Acme's scope 1 emissions in 2024?", []) != ""
 
 
 def test_given_a_question_when_rewritten_then_the_metric_terms_survive() -> None:

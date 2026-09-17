@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import lancedb
+
 from chunk import HierarchicalChunker
 from index.child_store import ChildStore
 from index.embeddings import Embeddings
@@ -33,6 +34,21 @@ class Ingest:
 
     _LOG: ClassVar[Any] = Logging.get("index")
     _PARSE_FAILURE: ClassVar[str] = "parse"
+    _SUFFIXES: ClassVar[frozenset[str]] = frozenset(
+        {
+            ".pdf",
+            ".docx",
+            ".doc",
+            ".xlsx",
+            ".xls",
+            ".pptx",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".tiff",
+            ".webp",
+        }
+    )
 
     @classmethod
     async def document(
@@ -42,7 +58,7 @@ class Ingest:
         company: str,
         domain: str,
         year: int,
-        extractor: str | None = None,
+        extractor: str,
         attributes: Mapping[str, Scalar] | None = None,
     ) -> dict[str, Any]:
         """Extract, chunk, embed, store and index one document.
@@ -55,7 +71,7 @@ class Ingest:
             company: The company the document belongs to.
             domain: The domain owning the table.
             year: The reporting year.
-            extractor: Which extractor to use, or None for the default.
+            extractor: Which extractor to use.
             attributes: Free-form scalar attributes attached to every node.
 
         Returns:
@@ -82,7 +98,7 @@ class Ingest:
         company: str,
         domain: str,
         year: int,
-        extractor: str | None = None,
+        extractor: str,
         attributes: Mapping[str, Scalar] | None = None,
     ) -> list[dict[str, Any]]:
         """Index every PDF in a directory, all under the one year given.
@@ -100,7 +116,7 @@ class Ingest:
             company: The company the documents belong to.
             domain: The domain owning the table.
             year: The reporting year.
-            extractor: Which extractor to use, or None for the default.
+            extractor: Which extractor to use.
             attributes: Free-form scalar attributes attached to every node.
 
         Returns:
@@ -112,9 +128,9 @@ class Ingest:
         resolved: str = resolve_domain(domain)
         directory: Path
         pdfs: list[Path]
-        directory, pdfs = await asyncio.to_thread(cls._pdfs_in, dir_path)
+        directory, pdfs = await asyncio.to_thread(cls._documents_in, dir_path)
         if not pdfs:
-            raise ValueError(f"no PDFs in {directory}")
+            raise ValueError(f"no ingestable documents in {directory}")
 
         cls._LOG.info(f"[index] ingesting {len(pdfs)} documents from {directory}")
         results: list[dict[str, Any]] = await cls._each(
@@ -137,7 +153,7 @@ class Ingest:
         company: str,
         domain: str,
         year: int,
-        extractor: str | None,
+        extractor: str,
         attributes: Mapping[str, Scalar] | None,
     ) -> list[dict[str, Any]]:
         """Ingest each document in turn, keeping a record for every one.
@@ -147,7 +163,7 @@ class Ingest:
             company: The company the documents belong to.
             domain: The resolved domain.
             year: The reporting year.
-            extractor: Which extractor to use, or None for the default.
+            extractor: Which extractor to use.
             attributes: Free-form scalar attributes attached to every node.
 
         Returns:
@@ -175,7 +191,7 @@ class Ingest:
         company: str,
         domain: str,
         year: int,
-        extractor: str | None,
+        extractor: str,
         attributes: Mapping[str, Scalar] | None,
     ) -> dict[str, Any]:
         """One document ingested, or a failure record when its extractor cannot read it.
@@ -189,7 +205,7 @@ class Ingest:
             company: The company the document belongs to.
             domain: The resolved domain.
             year: The reporting year.
-            extractor: Which extractor to use, or None for the default.
+            extractor: Which extractor to use.
             attributes: Free-form scalar attributes attached to every node.
 
         Returns:
@@ -215,7 +231,7 @@ class Ingest:
         company: str,
         domain: str,
         year: int,
-        extractor: str | None,
+        extractor: str,
         attributes: Mapping[str, Scalar] | None,
     ) -> dict[str, Any]:
         """Extract, chunk, embed and store one document, leaving the indexes to the caller.
@@ -229,7 +245,7 @@ class Ingest:
             company: The company the document belongs to.
             domain: The resolved domain.
             year: The reporting year.
-            extractor: Which extractor to use, or None for the default.
+            extractor: Which extractor to use.
             attributes: Free-form scalar attributes attached to every node.
 
         Returns:
@@ -291,7 +307,7 @@ class Ingest:
 
     @classmethod
     def _failure(
-        cls, pdf_path: str | Path, company: str, extractor: str | None, exc: Exception
+        cls, pdf_path: str | Path, company: str, extractor: str, exc: Exception
     ) -> dict[str, Any]:
         """Keep an unreadable document's traceback, and describe the skip to the caller.
 
@@ -302,7 +318,7 @@ class Ingest:
         Args:
             pdf_path: The document that could not be read.
             company: The company it belongs to.
-            extractor: Which extractor was asked for, or None for the default.
+            extractor: Which extractor was asked for.
             exc: The failure.
 
         Returns:
@@ -355,17 +371,18 @@ class Ingest:
         )
 
     @staticmethod
-    def _pdfs_in(dir_path: str | Path) -> tuple[Path, list[Path]]:
-        """The resolved directory and the PDFs directly inside it, sorted.
+    def _documents_in(dir_path: str | Path) -> tuple[Path, list[Path]]:
+        """The resolved directory and the documents directly inside it, sorted.
 
         Args:
             dir_path: The directory to scan.
 
         Returns:
-            The resolved directory and its PDFs.
+            The resolved directory and its documents.
         """
         directory: Path = Path(dir_path).expanduser().resolve()
-        return directory, sorted(p for p in directory.glob("*.pdf") if p.is_file())
+        found = (p for p in directory.iterdir() if p.suffix.lower() in Ingest._SUFFIXES)
+        return directory, sorted(p for p in found if p.is_file())
 
     @staticmethod
     def _stored_any(results: list[dict[str, Any]]) -> bool:

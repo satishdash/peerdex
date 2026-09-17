@@ -46,7 +46,9 @@ async def test_given_a_directory_when_indexed_then_the_right_pdfs_run_in_order(
         (tmp_path / extra).write_text("x")
     one, _ = _stub(mocker)
 
-    await Ingest.directory(tmp_path, company="acme", domain="corporate", year=2025)
+    await Ingest.directory(
+        tmp_path, company="acme", domain="corporate", year=2025, extractor="docling"
+    )
 
     assert [call.args[0].name for call in one.call_args_list] == expected
 
@@ -60,9 +62,13 @@ async def test_given_either_entry_point_when_indexed_then_the_table_is_indexed_o
     _, indexed = _stub(mocker)
 
     if entry == "doc":
-        await Ingest.document(tmp_path / "a.pdf", company="acme", domain="corporate", year=2025)
+        await Ingest.document(
+            tmp_path / "a.pdf", company="acme", domain="corporate", year=2025, extractor="docling"
+        )
     else:
-        await Ingest.directory(tmp_path, company="acme", domain="corporate", year=2025)
+        await Ingest.directory(
+            tmp_path, company="acme", domain="corporate", year=2025, extractor="docling"
+        )
 
     indexed.assert_called_once()
 
@@ -73,8 +79,10 @@ async def test_given_an_empty_directory_when_indexed_then_it_fails(
     """A silent no-op reads as a successful ingest and is how an empty index ships."""
     _stub(mocker)
 
-    with pytest.raises(ValueError, match="no PDFs"):
-        await Ingest.directory(tmp_path, company="acme", domain="corporate", year=2025)
+    with pytest.raises(ValueError, match="no ingestable documents"):
+        await Ingest.directory(
+            tmp_path, company="acme", domain="corporate", year=2025, extractor="docling"
+        )
 
 
 @pytest.mark.parametrize("bad", ["invoices", "corporat", ""])
@@ -86,7 +94,7 @@ async def test_given_an_unconfigured_domain_when_indexed_then_it_fails(
     _stub(mocker)
 
     with pytest.raises(ValueError, match="unknown domain"):
-        await Ingest.directory(tmp_path, company="acme", domain=bad, year=2025)
+        await Ingest.directory(tmp_path, company="acme", domain=bad, year=2025, extractor="docling")
 
 
 @pytest.mark.parametrize("given", ["corporate", "CORPORATE", " Corporate "])
@@ -119,7 +127,7 @@ async def test_given_one_unreadable_document_when_indexing_a_directory_then_the_
     _, table, _ = _failing(mocker, bad="b.pdf")
 
     results: list[dict[str, Any]] = await Ingest.directory(
-        tmp_path, company="acme", domain="corporate", year=2025
+        tmp_path, company="acme", domain="corporate", year=2025, extractor="docling"
     )
 
     assert [result.get("failed", False) for result in results] == [False, True, False]
@@ -133,7 +141,9 @@ async def test_given_an_unreadable_document_when_indexing_then_the_traceback_is_
     _pdfs(tmp_path, "a")
     _, _, dlq = _failing(mocker, bad="a.pdf")
 
-    await Ingest.directory(tmp_path, company="acme", domain="corporate", year=2025)
+    await Ingest.directory(
+        tmp_path, company="acme", domain="corporate", year=2025, extractor="docling"
+    )
 
     payload: dict[str, Any] = dlq.call_args.args[2]
     assert dlq.call_args.args[1] == "parse"
@@ -151,7 +161,7 @@ async def test_given_a_single_unreadable_document_when_indexing_then_it_is_recor
     _failing(mocker, bad="a.pdf")
 
     result: dict[str, Any] = await Ingest.document(
-        tmp_path / "a.pdf", company="acme", domain="corporate", year=2025
+        tmp_path / "a.pdf", company="acme", domain="corporate", year=2025, extractor="docling"
     )
 
     assert result["failed"] is True
@@ -165,6 +175,8 @@ async def test_given_every_document_fails_when_indexing_then_the_table_is_left_a
     _pdfs(tmp_path, "a")
     _, table, _ = _failing(mocker, bad="a.pdf")
 
-    await Ingest.directory(tmp_path, company="acme", domain="corporate", year=2025)
+    await Ingest.directory(
+        tmp_path, company="acme", domain="corporate", year=2025, extractor="docling"
+    )
 
     table.assert_not_called()

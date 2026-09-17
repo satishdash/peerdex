@@ -58,7 +58,7 @@ def index(
     year: Annotated[int, typer.Option("--year", "-y", help="reporting year")],
     extractor: Annotated[
         str, typer.Option("--extractor", "-e", help="PDF extractor backend (docling, ...)")
-    ] = "docling",
+    ],
     meta: Annotated[
         list[str] | None,
         typer.Option("--meta", "-m", help="KEY=VALUE attribute, repeatable"),

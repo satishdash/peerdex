@@ -53,7 +53,7 @@ resilience:
   openai_rpm: ${PEERDEX_OPENAI_RPM:-500}
   openai_tpm: ${PEERDEX_OPENAI_TPM:-200000}
   retry_attempts: 5
-  timeout_seconds: 60
+  timeout_seconds: 120
 
 index:
   vector_type: ${PEERDEX_VECTOR_INDEX_TYPE:-IVF_SQ}

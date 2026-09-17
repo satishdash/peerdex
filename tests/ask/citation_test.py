@@ -34,7 +34,7 @@ def _passage(pid: str = "d1:c0", page: int = 41) -> Passage:
         score=0.9,
         parent_id="d1:p0",
         metadata={
-            "company": "acmeair",
+            "company": "acme",
             "year": 2024,
             "page_no": page,
             "heading_path": "GHG emissions",
@@ -47,7 +47,7 @@ def _question(kind: AnswerKind = AnswerKind.QUANTITATIVE) -> Question:
     return Question(
         text="scope 1 emissions",
         kind=kind,
-        company="acmeair",
+        company="acme",
         domain="corporate",
         filters={"year": 2024},
     )
@@ -66,7 +66,7 @@ async def test_given_an_answer_when_returned_then_it_cites_the_passages_read(
     assert len(answer.citations) == 1
     cited: Citation = answer.citations[0]
     assert cited.chunk_id == "d1:c0"
-    assert cited.company == "acmeair"
+    assert cited.company == "acme"
     assert cited.year == 2024
     assert cited.page_no == 41
     assert cited.heading_path == "GHG emissions"
@@ -90,7 +90,7 @@ async def test_given_a_qualitative_answer_when_returned_then_it_also_cites(
 ) -> None:
     """Prose needs provenance at least as much as a value does."""
     stages["find"].return_value = [_passage()]
-    stages["prose"].return_value = "Acme Air targets net zero by 2050."
+    stages["prose"].return_value = "Acme targets net zero by 2050."
 
     answer = await AskPipeline.ask(_question(AnswerKind.QUALITATIVE))
 

@@ -20,7 +20,7 @@ def _client(mocker: MockerFixture, body: str) -> Any:
 
 def _passages() -> list[Passage]:
     return [
-        Passage(id="d1:c0", text="Acme Air set a 2050 net-zero goal.", score=0.9),
+        Passage(id="d1:c0", text="Acme set a 2050 net-zero goal.", score=0.9),
         Passage(id="d1:c1", text="Interim targets cover 2030.", score=0.8),
     ]
 
