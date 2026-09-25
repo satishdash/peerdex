@@ -76,7 +76,7 @@ class Reader:
         """
         response: Any = await Clients.openai_async().chat.completions.create(
             model=get_settings().llm.model,
-            temperature=0,
+            temperature=get_settings().llm.temperature,
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": DocumentPrompts.current().read_prompt},

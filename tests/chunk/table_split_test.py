@@ -1,5 +1,6 @@
 """Dense tables must chunk into row groups that each stay answerable on their own."""
 
+import pytest
 import tiktoken
 from llama_index.core.schema import TextNode
 
@@ -12,6 +13,7 @@ _ENC = tiktoken.get_encoding("cl100k_base")
 
 YEARS: list[str] = ["2015", "2023", "2024", "2025"]
 METRICS: list[str] = [f"Scope 1 - site {n} energy consumption" for n in range(40)]
+WIDE: int = 2000
 
 
 def _doc(headers: list[str], rows: list[list[str]]) -> ExtractedDoc:
@@ -31,11 +33,17 @@ def _doc(headers: list[str], rows: list[list[str]]) -> ExtractedDoc:
     )
 
 
-async def _children(headers: list[str], rows: list[list[str]]) -> list[TextNode]:
+async def _nodes(
+    headers: list[str], rows: list[list[str]]
+) -> tuple[list[TextNode], list[TextNode]]:
     meta = DocumentMetadata(
         company="acme", year=2025, source_uri="/docs/a.pdf", extractor="docling"
     )
-    _, children = await HierarchicalChunker().chunk(_doc(headers, rows), doc_id="d1", metadata=meta)
+    return await HierarchicalChunker().chunk(_doc(headers, rows), doc_id="d1", metadata=meta)
+
+
+async def _children(headers: list[str], rows: list[list[str]]) -> list[TextNode]:
+    _, children = await _nodes(headers, rows)
     return children
 
 
@@ -68,3 +76,49 @@ async def test_given_small_table_when_chunked_then_one_child_only() -> None:
 
     assert len(children) == 1
     assert "62587" in children[0].text
+
+
+@pytest.mark.parametrize(
+    ("headers", "lead", "table"),
+    [
+        (["metric", "2025", *[""] * WIDE], [], "| metric | 2025 |\n| --- | --- |\n"),
+        (
+            [str(n) for n in range(WIDE + 2)],
+            [["metric", "2025"]],
+            "| 0 | 1 |\n| --- | --- |\n| metric | 2025 |\n",
+        ),
+    ],
+    ids=["named", "positional"],
+)
+async def test_given_trailing_empty_columns_when_chunked_then_only_filled_columns_render(
+    headers: list[str], lead: list[list[str]], table: str
+) -> None:
+    """A sheet whose used range spans every column must not pad each chunk with empty cells."""
+    rows = [*lead, ["Scope 1 - Total", "62587", *[""] * WIDE], ["Scope 2", "1200"]]
+    body: str = "| Scope 1 - Total | 62587 |\n| Scope 2 | 1200 |"
+
+    parents, children = await _nodes(headers, rows)
+
+    assert len(parents) == 1
+    assert f"{table}{body}" in parents[0].text
+    assert "|   |" not in parents[0].text
+    assert len(children) == 1
+    assert body in children[0].text
+    assert "|   |" not in children[0].text
+    assert len(_ENC.encode(children[0].text)) <= get_settings().chunker.child_chunk_tokens
+
+
+async def test_given_cells_merged_across_the_row_when_chunked_then_each_text_renders_once() -> None:
+    """A merged cell repeats its text in every column it spans; one copy says it all."""
+    note: str = "1 Totals may not add up due to rounding."
+    rows = [[note] * (WIDE + 1), ["2 Restated.", *[""] * WIDE]]
+    table: str = f"| {note} |\n| --- |\n| {note} |\n| 2 Restated. |"
+
+    parents, children = await _nodes([note, *[""] * WIDE], rows)
+
+    assert len(parents) == 1
+    assert table in parents[0].text
+    assert parents[0].text.count(note) == 2
+    assert len(children) == 1
+    assert table in children[0].text
+    assert len(_ENC.encode(children[0].text)) <= get_settings().chunker.child_chunk_tokens

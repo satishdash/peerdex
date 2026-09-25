@@ -55,9 +55,12 @@ class DocumentPrompts:
         '    "label": str,\n'
         '    "column": str\n'
         "  }\n"
-        "value is the figure exactly as the document writes it, including thousands "
-        "separators, and empty when the passages do not state it. unit is the unit as "
-        "the document spells it, empty when unitless. label is the row label the value "
+        "value is the number alone: digits, a leading minus sign, thousands separators "
+        "and a decimal point, exactly as the document writes them, and empty when the "
+        "passages do not state it. unit is everything the document writes around that "
+        "number, verbatim and in the document's order: a currency symbol or code, a "
+        "scale word such as thousand or million, a percent sign, a unit of measure. "
+        "unit is empty when the number stands alone. label is the row label the value "
         "sits on, quoted verbatim with its scope and boundary qualifiers. column is the "
         "column heading the value sits under, quoted verbatim, and empty when the "
         "passages show no column. Never infer, never convert, never compute. If the "

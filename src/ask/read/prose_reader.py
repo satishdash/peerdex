@@ -54,7 +54,7 @@ class ProseReader:
         prompts = DocumentPrompts.current()
         response: Any = await Clients.openai_async().chat.completions.create(
             model=get_settings().llm.model,
-            temperature=0,
+            temperature=get_settings().llm.temperature,
             messages=[
                 {"role": cls._ROLE, "content": prompts.prose_prompt},
                 {

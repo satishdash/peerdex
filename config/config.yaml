@@ -1,4 +1,4 @@
-env: dev
+env: ${PEERDEX_ENV:-dev}
 
 storage:
   lancedb_uri: ${PEERDEX_LANCEDB_URI:-./lancedb}
@@ -38,11 +38,11 @@ embed:
 
 llm:
   model: ${OPENAI_LLM_MODEL:-gpt-5.4-mini}
-  synth_model: ${OPENAI_SYNTH_MODEL:-gpt-5.4-mini}
+  temperature: ${OPENAI_LLM_TEMPERATURE:-0}
   judge_model: ${OPENAI_JUDGE_MODEL:-gpt-5.4-mini}
 
 vlm:
-  model: ${OPENAI_VLM_MODEL:-gpt-5.4-mini}
+  model: ${OPENAI_VLM_MODEL:-gpt-5.4-nano}
   cache_dir: ${PEERDEX_VLM_CACHE:-./cache/vlm-images}
   image_max_dim: 1600
   min_bbox_area_pct: 1.5

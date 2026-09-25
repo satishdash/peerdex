@@ -15,6 +15,7 @@ NAME      ?=
 SUITE     ?=
 EVAL_FLAGS ?=
 EXTRACTOR ?=
+KIND      ?=
 META      ?=
 FILTER    ?=
 CACHE_DIR ?= $(HOME)/.cache/peerdex/cache
@@ -27,6 +28,7 @@ need_domain  = test -n "$(DOMAIN)"  || (echo "DOMAIN=... required"  && exit 2)
 need_year    = test -n "$(YEAR)"    || (echo "YEAR=... required"    && exit 2)
 need_data    = test -n "$(DATA_DIR)$(DATA_FILE)" || (echo "DATA_DIR=/abs/dir or DATA_FILE=/abs/file required" && exit 2)
 need_extractor = test -n "$(EXTRACTOR)" || (echo "EXTRACTOR=docling|docling-rs|liteparse|odl|xberg required" && exit 2)
+need_kind    = test -n "$(KIND)"    || (echo "KIND=quantitative|qualitative required" && exit 2)
 year_filter  = $(if $(YEAR),-f year=$(YEAR))
 
 .PHONY: install clean-cache clean-db clean-parse refresh-models tests lint format index ask eval
@@ -85,7 +87,8 @@ ask:
 	@test -n "$(Q)" || (echo 'Q="..." required' && exit 2)
 	@$(need_company)
 	@$(need_domain)
-	$(RAG) ask "$(Q)" -c "$(COMPANY)" -d $(DOMAIN) $(year_filter) $(FILTER) -k $(TOP_K)
+	@$(need_kind)
+	$(RAG) ask "$(Q)" -c "$(COMPANY)" -d $(DOMAIN) $(year_filter) $(FILTER) -k $(KIND)
 
 
 eval:

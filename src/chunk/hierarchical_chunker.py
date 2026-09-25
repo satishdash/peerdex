@@ -19,6 +19,7 @@ from chunk.node_accumulator import NodeAccumulator
 from chunk.pending_node import PendingNode
 from chunk.picture_descriptions import PictureDescriptions
 from chunk.prose_chunker import ProseChunker
+from chunk.redundant_columns import RedundantColumns
 from chunk.section import Section
 from chunk.section_grouper import SectionGrouper
 from chunk.table_chunker import TableChunker
@@ -125,7 +126,7 @@ class HierarchicalChunker:
             acc: Where the nodes are collected.
             child_tokens: Tokens a single row group may cost.
         """
-        for tb in (b for b in sec.blocks if isinstance(b, TableBlock)):
+        for tb in (RedundantColumns.dropped(b) for b in sec.blocks if isinstance(b, TableBlock)):
             parent: TextNode = acc.parent(BlockRenderer.table(tb), sec, sec_idx, is_table=True)
             kids: list[TextNode] = [
                 acc.child(text, sec, parent.node_id, is_table=True)

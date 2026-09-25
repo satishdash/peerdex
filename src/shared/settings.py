@@ -73,7 +73,7 @@ class LLMCfg(BaseModel):
     """Text-only LLMs. Vision lives under ``vlm`` below."""
 
     model: str
-    synth_model: str | None = None
+    temperature: float = 0.0
     judge_model: str | None = None
 
 

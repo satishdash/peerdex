@@ -10,8 +10,8 @@ license = { text = "Proprietary" }
 dependencies = [
     # ---------- Parsing & VLM ----------
     "xberg>=1.1.5",
-    "docling>=2.128.0",
-    "docling-rs>=1.55.0",
+    "docling>=2.130.0",
+    "docling-rs>=1.69.1",
     "liteparse>=2.14.4",
     "opendataloader-pdf[hybrid]>=2.5.8",
     "openai>=3.13.0",

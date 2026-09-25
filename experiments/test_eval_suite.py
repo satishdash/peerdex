@@ -123,7 +123,7 @@ async def ask_one(q, company, year, domain, entry):
             kind=AnswerKind(q.get("kind", "quantitative")),
             company=company,
             domain=domain,
-            filters={"year": {year}},
+            filters={"year": (year,)},
         )
     )
     return Asked(
@@ -147,7 +147,7 @@ async def find_one(q, company, year, domain, entry, top_k):
             kind=AnswerKind(q.get("kind", "quantitative")),
             company=company,
             domain=domain,
-            filters={"year": {year}},
+            filters={"year": (year,)},
         )
     )
     return Asked(
@@ -158,7 +158,7 @@ async def find_one(q, company, year, domain, entry, top_k):
         value="",
         unit="",
         refused=False,
-        pages=[p.page_no for p in passages[:top_k]],
+        pages=[int(p.metadata.get("page_no") or 0) for p in passages[:top_k]],
         expected_pages=[int(p) for p in entry.get("expected_pages", [])],
     )
 

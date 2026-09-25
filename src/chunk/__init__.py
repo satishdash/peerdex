@@ -10,6 +10,7 @@ from chunk.node_factory import NodeFactory
 from chunk.pending_node import PendingNode
 from chunk.picture_descriptions import PictureDescriptions
 from chunk.prose_chunker import ProseChunker
+from chunk.redundant_columns import RedundantColumns
 from chunk.section import Section
 from chunk.section_grouper import SectionGrouper
 from chunk.table_chunker import TableChunker
@@ -27,6 +28,7 @@ __all__ = [
     "PendingNode",
     "PictureDescriptions",
     "ProseChunker",
+    "RedundantColumns",
     "Section",
     "SectionGrouper",
     "TableChunker",
