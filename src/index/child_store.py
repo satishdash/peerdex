@@ -13,10 +13,10 @@ for: a second JSON copy of every node, and a column typed null.
 from collections.abc import Sequence
 from typing import Any, ClassVar
 
+import lancedb
 import pyarrow as pa
 from llama_index.core.schema import BaseNode, MetadataMode
 
-import lancedb
 from index.predicates import Predicates
 from index.tables import Tables
 from shared.logging import Logging

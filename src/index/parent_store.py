@@ -17,9 +17,9 @@ The table is created on first use, so a new domain needs no migration.
 from collections.abc import Sequence
 from typing import Any, ClassVar
 
+import lancedb
 from llama_index.core.schema import BaseNode
 
-import lancedb
 from index.parent_row import ParentRow
 from index.predicates import Predicates
 from index.tables import Tables

@@ -3,6 +3,7 @@
 from typing import Any
 
 import lancedb
+
 from shared.settings import get_settings, resolve_domain
 
 
