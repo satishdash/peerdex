@@ -9,11 +9,11 @@ license = { text = "Proprietary" }
 
 dependencies = [
     # ---------- Parsing & VLM ----------
-    "xberg>=1.1.5",
+    "xberg>=1.2.9",
     "docling>=2.130.0",
-    "docling-rs>=1.69.1",
-    "liteparse>=2.14.4",
-    "opendataloader-pdf[hybrid]>=2.5.8",
+    "docling-rs>=1.69.2",
+    "liteparse>=2.14.7",
+    "opendataloader-pdf[hybrid]>=2.5.11",
     "openai>=3.13.0",
     # ---------- Vector store ----------
     "lancedb>=0.38.0",              # pinned: a newer writer can strand older readers
