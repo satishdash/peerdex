@@ -63,27 +63,30 @@ row label, unit and period intact.
 
 ## Evaluation
 
+Suite: `config/suites.yaml` (gitignored, `PEERDEX_SUITES` overrides), keyed
+`<company code> -> <year> -> expected_answer`. Index each company under its code.
+
 ```bash
-uv run python experiments/score_suite.py --company acme --year 2025 --extractor docling
+make eval COMPANY=<code> YEAR=<year>                        # answers replay from $PEERDEX_EVAL_DIR
+make eval COMPANY=<code> YEAR=<year> EVAL_FLAGS=--rescore   # score only, no model calls
 ```
 
-Outcomes: `match`, `mismatch`, `scale_mismatch`, `missed`, `abstained`, `extra`.
-An empty reference is scored too — answering one is `extra`, abstaining is
-`abstained`, which is how hallucination is measured.
+Outcomes: `good`, `wrong`, `missed`, `silent`, `invented`. An empty reference
+scores hallucination: answering it is `invented`.
 
 Never report one LLM run; run three.
 
 ## Config
 
 `config/config.yaml` with `${ENV_VAR:-default}` expansion; secrets in `.env`.
-No model name is hardcoded. Storage is `./lancedb/` + `./cache/`.
+No model name is hardcoded. Storage is `~/.cache/peerdex/`.
 
 Every optional stage is a toggle, scored off and on before it becomes a default.
 
 ## Development
 
 ```bash
-make test      # unit tests, warnings fatal
+make tests     # unit tests, warnings fatal
 make lint      # ruff check + format --check
 make format
 ```
