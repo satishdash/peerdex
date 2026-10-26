@@ -1,0 +1,18 @@
+suites:
+  example:
+    - q: "Gross global Scope 1 emissions"
+      kind: quantitative
+      unit: "tCO2e"
+      ground_truth:
+        acme:
+          2025:
+            expected_answer: "12345"
+            expected_pages: []
+    - q: "Total number of hours worked by all employees"
+      kind: quantitative
+      unit: "hour"
+      ground_truth:
+        acme:
+          2025:
+            expected_answer: ""
+            expected_pages: []

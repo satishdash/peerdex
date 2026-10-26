@@ -1,6 +1,6 @@
 # peerdex
 
-Agentic RAG over corporate reports. Personal project — treat it as restricted.
+Agentic RAG over corporate reports.
 
 ## Project
 
@@ -56,6 +56,8 @@ Non-negotiable. They outrank convenience and they outrank an existing file that 
 - Every package has `__init__.py`, `tests/` included.
 - Flat `src/` layout. No distribution sub-package inside it.
 - Every document in this repository stays under 400 lines.
+- A fix is a property of the system, never of a corpus: a fixed top-k is corpus tuning, a score-based cutoff is a system property.
+- An extractor's output is not negotiable. Speed work may change when, where and how often it runs, never what it produces.
 
 ### Enforcement
 

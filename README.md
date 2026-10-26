@@ -9,7 +9,7 @@ report kinds. A domain (`-d`) is one LanceDB table plus one prompt set.
 
 ```bash
 make install                  # then set OPENAI_API_KEY in .env
-uv run rag index report.pdf -c acme -d corporate -y 2025
+uv run rag index report.pdf -c acme -d corporate -y 2025 -e docling-rs
 uv run rag ask "Gross global Scope 1 emissions" -c acme -d corporate -f year=2025
 ```
 
@@ -63,7 +63,7 @@ row label, unit and period intact.
 
 ## Evaluation
 
-Suite: `config/suites.yaml` (gitignored, `PEERDEX_SUITES` overrides), keyed
+Suite: `config/suites.yaml` (gitignored; start from `config/suites.example.yaml`), keyed
 `<company code> -> <year> -> expected_answer`. Index each company under its code.
 
 ```bash
@@ -91,4 +91,9 @@ make lint      # ruff check + format --check
 make format
 ```
 
-Conventions: `AGENTS.md`. Design: `docs/architecture.md`. Plan: `docs/backlog.md`.
+Conventions: `AGENTS.md`. Design: `docs/architecture.md`.
+
+## License
+
+AGPL-3.0-or-later, see `LICENSE`. A commercial license for closed or hosted use
+is available from the author.

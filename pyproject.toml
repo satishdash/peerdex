@@ -5,7 +5,7 @@ description = "Production-grade RAG over peer company reports — hierarchical, 
 readme = "README.md"
 requires-python = ">=3.14"
 authors = [{ name = "Satish Dash" }]
-license = { text = "Proprietary" }
+license = { text = "AGPL-3.0-or-later" }
 
 dependencies = [
     # ---------- Parsing & VLM ----------
@@ -39,6 +39,9 @@ dependencies = [
     # ---------- Logging ----------
     "loguru>=0.7.3",
 ]
+
+[project.urls]
+Repository = "https://github.com/satishdash/peerdex"
 
 [project.optional-dependencies]
 dev = [
